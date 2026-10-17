@@ -23,4 +23,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- Match the WinForms host: WebView2's unused WPF reference also flows through ProjectReference. -->
+  <Target Name="DropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
 </Project>

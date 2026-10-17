@@ -12,7 +12,8 @@
 
 BoostOS opens full screen like a PlayStation or Xbox dashboard and is driven with a controller, the keyboard or a mouse.
 Press **Rocket League** and it closes what would get in the way mid-match, switches power to performance and starts the
-game through its own launcher. When the match ends, everything goes back by itself and you get a short report on how the PC held up.
+game through its own launcher. When Rocket League closes, BoostOS attempts to restore the changes and shows a session report.
+Failed recovery items stay saved for retry. Reports include menus and training as well as matches; they do not measure FPS.
 
 > Made by **Hananel Sabag**.
 
@@ -22,14 +23,14 @@ game through its own launcher. When the match ends, everything goes back by itse
 
 | | |
 |---|---|
-| **Play** | Turns on Game Mode, then starts Rocket League through Epic Games or Steam (with Easy Anti-Cheat). BoostOS minimizes and its page is suspended, so it costs nothing while you play. |
+| **Play** | Turns on Game Mode, then starts Rocket League through Epic Games or Steam. BoostOS minimizes and attempts to suspend its page; the process watcher and optional recorder still run. |
 | **Game Mode** | Closes background sync, updaters and phone extras (OneDrive, Steam, Phone Link, Widgets, Teams, Copilot, Adobe) and sets *Best performance*. A snapshot on disk lets it restore even after a crash. Browsers, Discord, Spotify and your controller software are never touched. |
 | **Diagnostics** | A folder that unfolds into four tools. |
 | ↳ Full scan | Ten areas: PC, displays, graphics, power, network, Rocket League, Windows gaming settings, background apps, controllers, storage. Every problem BoostOS can fix has a **Fix** button, and every fix can be undone. |
 | ↳ Network test | Router and internet pinged side by side, drawn live: blue is the Wi-Fi link, orange is the way out. It tells loss from a router that only limits pings, and finds spikes on a fixed beat (Windows' background Wi-Fi scans). |
 | ↳ Controller test | Live sticks, triggers and buttons, plus a 3-second drift test that recommends a Controller Deadzone for Rocket League. |
-| ↳ Mouse test | Polling rate from raw pointer updates. |
-| **Match report** | After each match: GPU load, peak temperature, clocks, power, time the GPU was held back, and the busiest CPU core. It names the bottleneck and compares the match with the previous one. |
+| ↳ Mouse test | Estimated event rate from raw pointer updates, subject to browser and scheduling limits. |
+| **Session report** | After Rocket League closes: system GPU load, temperature, clocks, power, limiting samples and the busiest CPU core. Possible bottlenecks are estimates from system load, without frame-time data. |
 | **Settings** | Hebrew or English, interface sounds, controller rumble, start full screen, match reports, and *Undo all fixes*. |
 
 | Diagnostics folder | Full scan |
@@ -40,9 +41,9 @@ game through its own launcher. When the match ends, everything goes back by itse
 | **Controller test** | **Settings** |
 | ![Controller test](docs/controller-test.png) | ![Settings](docs/settings-en.png) |
 
-## Safe with Easy Anti-Cheat
+## Game process isolation
 
-Rocket League requires Easy Anti-Cheat online since 28 April 2026. BoostOS is built so there is nothing for it to see:
+BoostOS uses the game's launcher and keeps its monitoring outside the game process:
 
 - It never opens a handle to the game process, never reads its memory, and injects nothing.
 - It finds the game from the system's process snapshot only (`Process.GetProcessesByName`).
@@ -66,7 +67,10 @@ Everything it changes is a Windows setting, a driver profile or the game's setti
 | Wi-Fi roaming | Intel *Roaming Aggressiveness* → *Lowest* | ✓ |
 | NVIDIA profile | Rocket League profile: *Prefer maximum performance* + *Low Latency Mode: On* (via NVAPI) | ✓ |
 
-Each fix stores the value it replaced in `%LOCALAPPDATA%\BoostOS\fixes.json`; *Undo all fixes* writes them back.
+Each successful fix records the value it replaced in `%LOCALAPPDATA%\BoostOS\fixes.json`; *Undo all fixes* attempts to write it back.
+Wi-Fi backups now include the original adapter or power-plan identity. Older scalar Wi-Fi backups cannot identify that target;
+they are retained and report that manual recovery is needed. Permanent fixes still need stronger transaction handling for a crash
+between changing a setting and saving its backup; see the [code review](docs/CODE_REVIEW.he.md).
 Admin fixes run in a second copy of BoostOS started elevated, so a batch asks for approval once.
 What BoostOS deliberately leaves alone, because the effect is unproven or a trade-off: HAGS, MIMO power save, monitor overclocking, Windows security features.
 
@@ -75,7 +79,7 @@ What BoostOS deliberately leaves alone, because the effect is unproven or a trad
 - **The arena:** night navy under two floodlights that take the colour of the focused tile. Blue team, orange team, and boost yellow.
 - **The boost meter:** the readiness score is the round boost gauge from the Rocket League HUD, and it fills like a boost pickup at start-up.
 - **Console motion:** a boot sequence, tiles that spring into focus with a light sweep, a folder that unfolds its tools, view transitions between screens, short Web Audio interface sounds and a light controller rumble. `prefers-reduced-motion` is honoured.
-- **Free while you play:** animations use transform, opacity and filter only, every loop pauses when the page is hidden, and the host suspends the whole WebView2 once the window is minimized.
+- **Less work while you play:** the host attempts to suspend WebView2 when minimized. UI sound processing sleeps between sounds, controller drawing shares the focused input poll, and the watcher and optional system recorder continue in the host.
 - **Type:** Karantina (scoreboard-style Hebrew display face) and Assistant, bundled so the app works offline.
 
 ## How it's built
@@ -108,6 +112,15 @@ dotnet test BoostOS.slnx
 dotnet publish src/BoostOS -c Release -o publish
 ```
 
+Browser-only preview, with Python 3 installed:
+
+```
+python tools/serve-preview.py
+```
+
+Open `http://127.0.0.1:8744/`. The preview uses a fake host and optional sample data, and does not apply Windows fixes.
+The [17 October 2026 review](docs/CODE_REVIEW.he.md) records implemented fixes, remaining limitations and validation.
+
 Headless modes, handy for checking a machine:
 
 ```
@@ -132,10 +145,10 @@ BoostOS.exe --nvidia-json nv.json        # raw NVIDIA profile fields
 
 BoostOS הוא מסך בית בסגנון קונסולה לווינדוס, שמכין את המחשב לרוקט ליג ומחזיר אותו למצב הרגיל אחרי המשחק.
 
-- **רוקט ליג:** מפעיל מצב משחק ופותח את המשחק דרך Epic או Steam, יחד עם Easy Anti‑Cheat. בזמן המשחק BoostOS מוקטן ומוקפא, ולא לוקח משאבים.
+- **רוקט ליג:** מפעיל מצב משחק ופותח את המשחק דרך Epic או Steam. BoostOS מוקטן ומנסה להקפיא את הממשק; ניטור המשחק והקלטת נתוני המערכת ממשיכים.
 - **מצב משחק:** סוגר תוכנות רקע (OneDrive, Steam, Phone Link ועוד) ומעביר את החשמל לביצועים. כשהמשחק נסגר, הכל חוזר לבד.
 - **אבחון:** תיקייה עם ארבעה כלים: סריקה מלאה עם כפתור "תקן" לכל בעיה, בדיקת רשת, בדיקת שלט עם המלצה ל-deadzone, ובדיקת עכבר.
-- **דוח משחק:** אחרי כל משחק מוצגים עומס, טמפרטורה ומהירות של כרטיס המסך, ומה הגביל את ה-FPS: המעבד או הכרטיס.
+- **דוח הפעלה:** אחרי סגירת רוקט ליג מוצגים נתוני המערכת לכל ההפעלה, כולל תפריטים ואימונים. ההערכה לגבי מגבלת מעבד או כרטיס מסך אינה מדידת FPS.
 - **בטוח עם האנטי-צ'יט:** BoostOS לא נוגע בתהליך של המשחק ולא בזיכרון שלו. הוא משנה רק הגדרות של ווינדוס, פרופיל בדרייבר וקובץ ההגדרות של המשחק, ואת כל השינויים אפשר להחזיר בלחיצה אחת.
 - **שפה:** עברית או אנגלית, לפי הבחירה בהגדרות.
 

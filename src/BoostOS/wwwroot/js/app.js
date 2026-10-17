@@ -20,12 +20,14 @@ const app = {
   settings: { language: 'he', sounds: true, rumble: true, startFullscreen: true, trackMatches: true },
   report: null,
   scanning: false,
+  scanError: null,
   game: null,
   matches: [],
   version: '',
   fixesApplied: 0,
   current: 'home',
 };
+let rescanAfterCurrent = false;
 
 const ctx = { app, show, back, startScan, saveSettings, refreshAll, renderHints };
 Object.values(screens).forEach(s => s.init(ctx));
@@ -60,6 +62,7 @@ function back() {
 function startScan() {
   if (app.scanning) return;
   app.scanning = true;
+  app.scanError = null;
   refreshAll();
   send('scan');
 }
@@ -82,7 +85,8 @@ function applySettings(next) {
   buildAll();
   show(app.current, { instant: true, focus: () => $('[data-key="language"]')?.focus({ preventScroll: true }) });
   app.report = null;
-  startScan(); // diagnostic texts come from the host, in the new language
+  if (app.scanning) rescanAfterCurrent = true;
+  else startScan(); // diagnostic texts come from the host, in the new language
 }
 
 // ---- Messages from the host ----
@@ -99,7 +103,12 @@ on('hello', h => {
   boot();
 });
 on('settings', s => { if (JSON.stringify(s) !== JSON.stringify(app.settings)) applySettings(s); });
-on('scan', r => { app.scanning = false; app.report = r; refreshAll(); });
+on('scan', r => {
+  app.scanning = false;
+  if (rescanAfterCurrent) { rescanAfterCurrent = false; startScan(); return; }
+  app.report = r;
+  refreshAll();
+});
 on('gameMode', s => {
   app.game = s;
   $('#game-chip').hidden = !s.active;
@@ -108,7 +117,16 @@ on('gameMode', s => {
 });
 on('launch', r => toast(r.ok ? t('launch.ok') : t('launch.fail')));
 on('notice', n => toast(n.message));
-on('error', e => { sfx.error(); toast(t('error', { msg: e.message })); });
+on('error', e => {
+  if (e.cmd === 'scan') {
+    app.scanning = false;
+    app.scanError = e.message;
+    if (rescanAfterCurrent) { rescanAfterCurrent = false; startScan(); }
+    else refreshAll();
+  }
+  sfx.error();
+  toast(t('error', { msg: e.message }));
+});
 on('preview', () => toast(t('preview')));
 on('resumed', () => send('gameModeStatus'));
 

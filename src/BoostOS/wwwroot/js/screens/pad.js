@@ -9,17 +9,28 @@ import { sfx } from '../sound.js';
 
 let ctx;
 let root;
-let raf = 0;
 let holdBackSince = 0;
 let drift = null;        // { until, left: 0, right: 0 } while measuring
 let result = null;       // { left, right, dz }
 let prevButtons = [];
+let activePadIndex = null;
 
 const PS = ['✕', '○', '□', '△', 'L1', 'R1', 'L2', 'R2', 'Create', 'Options', 'L3', 'R3', '↑', '↓', '←', '→', 'PS', 'Pad'];
 const XB = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'LS', 'RS', '↑', '↓', '←', '→', 'Xbox', ''];
 
 const screen = {
-  init(c) { ctx = c; },
+  init(c) {
+    ctx = c;
+    window.addEventListener('gamepaddisconnected', e => {
+      if (ctx.app.current !== 'pad' || e.gamepad.index !== activePadIndex) return;
+      drift = null;
+      result = null;
+      activePadIndex = null;
+      holdBackSince = 0;
+      draw(null);
+      renderResult();
+    });
+  },
 
   build(el) {
     root = el;
@@ -67,20 +78,17 @@ const screen = {
 
   enter() {
     holdBackSince = 0;
+    const gp = [...(navigator.getGamepads?.() ?? [])].find(Boolean);
+    if (activePadIndex !== (gp?.index ?? null)) result = null;
+    activePadIndex = gp?.index ?? null;
+    prevButtons = gp?.buttons.map(b => b.pressed) ?? [];
+    draw(gp);
+    // Navigation already polls at 60Hz while focused; share it instead of rendering a second loop.
     setCapture(capture);
-    cancelAnimationFrame(raf);
-    const loop = () => {
-      raf = requestAnimationFrame(loop);
-      if (document.hidden) return;
-      const gp = [...(navigator.getGamepads?.() ?? [])].find(Boolean);
-      draw(gp);
-    };
-    loop();
   },
 
   leave() {
     setCapture(null);
-    cancelAnimationFrame(raf);
     drift = null;
   },
 
@@ -91,6 +99,14 @@ export default screen;
 
 /** Raw controller input while on this screen. Only a long ○ / B press leaves; everything else is the test. */
 function capture(gp, now) {
+  if (gp.index !== activePadIndex) {
+    activePadIndex = gp.index;
+    drift = null;
+    result = null;
+    prevButtons = gp.buttons.map(b => b.pressed);
+    renderResult();
+  }
+  draw(gp);
   const backDown = !!gp.buttons[1]?.pressed;
   if (backDown && !holdBackSince) holdBackSince = now;
   if (!backDown) holdBackSince = 0;
@@ -107,7 +123,9 @@ function draw(gp) {
     help.textContent = t('pad.none');
     return;
   }
-  const names = padKind(gp) === 'ps' ? PS : XB;
+  help.textContent = t('pad.driftText');
+  const kind = padKind(gp);
+  const names = kind === 'ps' ? PS : XB;
   $('#tl-name', root).textContent = names[6];
   $('#tr-name', root).textContent = names[7];
 
@@ -122,8 +140,10 @@ function draw(gp) {
   $('#tr-v', root).textContent = `${Math.round(tr * 100)}%`;
 
   const box = $('#pad-buttons', root);
-  if (box.childElementCount !== gp.buttons.length) {
+  const layout = `${kind}:${gp.buttons.length}`;
+  if (box.dataset.layout !== layout) {
     box.innerHTML = gp.buttons.map((_, i) => names[i] ? `<span data-b="${i}">${esc(names[i])}</span>` : '').join('');
+    box.dataset.layout = layout;
   }
   gp.buttons.forEach((b, i) => box.querySelector(`[data-b="${i}"]`)?.classList.toggle('on', b.pressed));
 
@@ -134,7 +154,7 @@ function draw(gp) {
     if (left <= 0) {
       const worst = Math.max(drift.left, drift.right);
       // Deadzone just above the measured drift, with a small margin, in Rocket League's 0.00–1.00 scale.
-      result = { left: drift.left, right: drift.right, worst, dz: Math.max(0.02, Math.ceil((worst + 0.02) * 100) / 100) };
+      result = { left: drift.left, right: drift.right, worst, dz: Math.min(1, Math.max(0.02, Math.ceil((worst + 0.02) * 100) / 100)) };
       drift = null;
       sfx.on();
       renderResult();

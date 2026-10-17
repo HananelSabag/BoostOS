@@ -19,13 +19,20 @@ const TOGGLES = [
 const screen = {
   init(c) {
     ctx = c;
-    on('fixResult', ({ applied }) => {
+    on('fixResult', ({ outcome, applied }) => {
       if (!undoing) return;
       undoing = false;
       ctx.app.fixesApplied = applied;
-      toast(t('settings.undone'));
+      const failed = outcome?.failed ?? [];
+      if (failed.length) { sfx.error(); toast(t('scan.fixFailed', { msg: failed[0].message })); }
+      else toast(t('settings.undone'));
       screen.refresh();
       ctx.startScan();
+    });
+    on('error', e => {
+      if (e.cmd !== 'undoAllFixes') return;
+      undoing = false;
+      screen.refresh();
     });
   },
 
@@ -75,8 +82,9 @@ const screen = {
       ctx.saveSettings(next, key);
     }));
     $('#undo-row', root).addEventListener('click', () => {
-      if (!ctx.app.fixesApplied) return;
+      if (!ctx.app.fixesApplied || undoing) return;
       undoing = true;
+      this.refresh();
       send('undoAllFixes');
     });
     $('#exit-row', root).addEventListener('click', () => send('exit'));
@@ -89,7 +97,7 @@ const screen = {
     if (!root) return;
     const n = ctx.app.fixesApplied ?? 0;
     $('#fixes-sub', root).textContent = n ? t('settings.fixesSub', { n }) : t('settings.fixesNone');
-    $('#undo-row', root).disabled = n === 0;
+    $('#undo-row', root).disabled = n === 0 || undoing;
     $('#undo-label', root).style.visibility = n ? 'visible' : 'hidden';
     const s = ctx.app.settings;
     $$('[role="switch"]', root).forEach(row => {

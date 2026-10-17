@@ -8,6 +8,7 @@ let root;
 let count = 0;
 let peak = 0;
 let timer = 0;
+let windowStart = 0;
 
 export default {
   init(c) { ctx = c; },
@@ -32,11 +33,13 @@ export default {
     $('.back', root).addEventListener('click', () => ctx.back());
     const pad = $('#mouse-pad', root);
     const add = n => { count += n; pad.classList.add('active'); };
-    if ('onpointerrawupdate' in window) pad.addEventListener('pointerrawupdate', e => { if (e.pointerType === 'mouse') add(1); });
+    if ('onpointerrawupdate' in window) pad.addEventListener('pointerrawupdate', e => { if (e.pointerType === 'mouse') add(e.getCoalescedEvents?.().length || 1); });
     else pad.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') add(e.getCoalescedEvents?.().length || 1); });
     pad.addEventListener('pointerleave', () => pad.classList.remove('active'));
     $('#mouse-reset', root).addEventListener('click', () => {
       peak = 0;
+      count = 0;
+      windowStart = performance.now();
       $('#hz-now', root).textContent = '0';
       $('#hz-peak', root).textContent = '0';
       $('#mouse-verdict', root).textContent = t('mouse.none');
@@ -46,9 +49,12 @@ export default {
   enter() {
     clearInterval(timer);
     count = 0;
+    windowStart = performance.now();
     timer = setInterval(() => {
-      const hz = count * 4;
+      const now = performance.now();
+      const hz = Math.round(count * 1000 / Math.max(1, now - windowStart));
       count = 0;
+      windowStart = now;
       $('#hz-now', root).textContent = hz;
       if (hz > peak) {
         peak = hz;

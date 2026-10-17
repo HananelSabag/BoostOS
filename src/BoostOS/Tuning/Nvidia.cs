@@ -152,6 +152,31 @@ internal static class Nvidia
 
     private static string ReadUnicode(IntPtr buffer, int offset) => Marshal.PtrToStringUni(buffer + offset) ?? "";
 
+    internal static int SetWithCompatibleLayout(uint id, uint value, int preferredSize, Func<IntPtr, int> setSetting)
+    {
+        foreach (var size in SettingSizes.OrderBy(sz => sz == preferredSize ? 0 : 1))
+        {
+            var buf = Marshal.AllocHGlobal(size);
+            try
+            {
+                Marshal.Copy(new byte[size], 0, buf, size);
+                Marshal.WriteInt32(buf, 0, (int)Version(size, 1));
+                Marshal.WriteInt32(buf, 4100, (int)id);    // settingId
+                Marshal.WriteInt32(buf, 4104, 0);          // NVDRS_DWORD_TYPE
+                Marshal.WriteInt32(buf, 4120 + (size - 4120) / 2, (int)value); // u32CurrentValue
+                var status = setSetting(buf);
+                if (status == IncompatibleStructVersion) continue;
+                Check(status, "DRS_SetSetting");
+                return size;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buf);
+            }
+        }
+        throw new NvapiException("No supported NVDRS_SETTING version", IncompatibleStructVersion);
+    }
+
     private sealed class DrsSession : IDisposable
     {
         private readonly IntPtr handle;
@@ -291,21 +316,9 @@ internal static class Nvidia
 
         public void Set(IntPtr profile, uint id, uint value)
         {
-            var size = settingSize;
-            var buf = Marshal.AllocHGlobal(size);
-            try
-            {
-                Zero(buf, size);
-                Marshal.WriteInt32(buf, 0, (int)Version(size, 1));
-                Marshal.WriteInt32(buf, 4100, (int)id);    // settingId
-                Marshal.WriteInt32(buf, 4104, 0);          // NVDRS_DWORD_TYPE
-                Marshal.WriteInt32(buf, 4120 + (size - 4120) / 2, (int)value); // u32CurrentValue
-                Check(Fn<SetSettingFn>(0x577DD202)(handle, profile, buf), "DRS_SetSetting");
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(buf);
-            }
+            // Restore starts a fresh session and may not have called Get to negotiate the driver's layout.
+            settingSize = SetWithCompatibleLayout(id, value, settingSize,
+                buf => Fn<SetSettingFn>(0x577DD202)(handle, profile, buf));
         }
 
         public void RestoreDefault(IntPtr profile, uint id)

@@ -4,30 +4,36 @@ namespace BoostOS.Core;
 
 internal static class Shell
 {
-    /// <summary>Runs a console tool hidden and returns its stdout, or null if it is missing or times out.</summary>
+    /// <summary>Runs a console tool hidden and returns its stdout, or null if it fails, is missing or times out.</summary>
     public static string? Run(string exe, string args, int timeoutMs = 8000)
+        => RunAsync(exe, args, timeoutMs).GetAwaiter().GetResult();
+
+    private static async Task<string?> RunAsync(string exe, string args, int timeoutMs)
     {
-        try
+        using var process = new Process
         {
-            var psi = new ProcessStartInfo(exe, args)
+            StartInfo = new ProcessStartInfo(exe, args)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-            };
-            using var p = Process.Start(psi);
-            if (p is null) return null;
-            var output = p.StandardOutput.ReadToEndAsync();
-            if (!p.WaitForExit(timeoutMs))
-            {
-                try { p.Kill(); } catch { }
-                return null;
-            }
-            return output.Result;
+            },
+        };
+        try
+        {
+            using var timeout = new CancellationTokenSource(timeoutMs);
+            if (!process.Start()) return null;
+            // Both pipes must be drained concurrently: a full stderr pipe can block the tool before it exits.
+            var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            var error = process.StandardError.ReadToEndAsync(timeout.Token);
+            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            await Task.WhenAll(output, error).WaitAsync(timeout.Token).ConfigureAwait(false);
+            return process.ExitCode == 0 ? output.Result : null;
         }
         catch
         {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
             return null;
         }
     }

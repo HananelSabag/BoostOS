@@ -10,6 +10,7 @@ let lastPad = null;
 export function configure({ sounds, rumble }) {
   soundsOn = sounds;
   rumbleOn = rumble;
+  if (!soundsOn) ctx?.suspend().catch(() => {});
 }
 
 export const rememberPad = pad => { lastPad = pad; };
@@ -22,7 +23,7 @@ function audio() {
     master.gain.value = 0.9;
     master.connect(ctx.destination);
   }
-  if (ctx.state === 'suspended') ctx.resume();
+  if (ctx.state === 'suspended') ctx.resume().catch(() => {});
   return ctx;
 }
 
@@ -41,9 +42,10 @@ function tone(from, to, dur, { type = 'sine', gain = 0.04, delay = 0 } = {}) {
   o.connect(g).connect(master);
   o.start(t);
   o.stop(t + dur + 0.03);
+  o.onended = () => { o.disconnect(); g.disconnect(); };
   // A running AudioContext keeps the audio thread busy even in silence, so put it to sleep between sounds.
   clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => ctx?.suspend(), 2500);
+  idleTimer = setTimeout(() => ctx?.suspend().catch(() => {}), 2500);
 }
 
 let idleTimer = 0;
@@ -51,7 +53,7 @@ let idleTimer = 0;
 function rumble(ms, weak, strong = 0) {
   if (!rumbleOn || !lastPad?.vibrationActuator) return;
   try {
-    lastPad.vibrationActuator.playEffect('dual-rumble', { duration: ms, weakMagnitude: weak, strongMagnitude: strong });
+    lastPad.vibrationActuator.playEffect('dual-rumble', { duration: ms, weakMagnitude: weak, strongMagnitude: strong })?.catch(() => {});
   } catch { /* not every controller supports it */ }
 }
 
@@ -70,5 +72,6 @@ export const sfx = {
 
 document.addEventListener('visibilitychange', () => {
   if (!ctx) return;
-  if (document.hidden) ctx.suspend(); else if (soundsOn) ctx.resume();
+  if (document.hidden) ctx.suspend().catch(() => {});
+  // Resume only when the next sound is requested; returning to an idle window needs no audio thread.
 });

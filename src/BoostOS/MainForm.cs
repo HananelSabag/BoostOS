@@ -23,10 +23,13 @@ internal sealed class MainForm : Form
 
     private readonly WebView2 web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Backdrop };
     private readonly System.Windows.Forms.Timer gameWatch = new() { Interval = 4000 };
+    private readonly SemaphoreSlim systemChanges = new(1, 1);
     private AppSettings settings = AppSettings.Load();
     private CancellationTokenSource? netTest;
     private MatchRecorder? recorder;
     private bool fullscreen;
+    private bool checkingGame;
+    private string? startupRecoveryError;
     private bool? periodicWifiSpikes = LoadLastNetVerdict(); // from the last network test; null = never tested
 
     private static string LastNetPath => Path.Combine(AppSettings.DataDir, "last-net.json");
@@ -49,8 +52,16 @@ internal sealed class MainForm : Form
         Controls.Add(web);
 
         if (!windowed && settings.StartFullscreen) SetFullscreen(true);
-        Load += async (_, _) => await InitWebAsync();
-        Resize += async (_, _) => await OnResizedAsync();
+        Load += async (_, _) =>
+        {
+            try { await InitWebAsync(); }
+            catch (Exception ex) { ReportError("startup", ex); }
+        };
+        Resize += async (_, _) =>
+        {
+            try { await OnResizedAsync(); }
+            catch (Exception ex) { ReportError("resize", ex); }
+        };
         FormClosing += (_, _) =>
         {
             netTest?.Cancel();
@@ -78,6 +89,14 @@ internal sealed class MainForm : Form
 #endif
         core.SetVirtualHostNameToFolderMapping(Host, Path.Combine(AppContext.BaseDirectory, "wwwroot"), CoreWebView2HostResourceAccessKind.Deny);
         core.WebMessageReceived += OnMessage;
+
+        // A previous run may have ended before it could restore. Never undo a session still in progress.
+        try
+        {
+            await ChangeSystemAsync(() => !RocketLeague.IsRunning() && GameMode.IsActive
+                ? GameMode.Restore(periodicWifiSpikes) : null);
+        }
+        catch (Exception ex) { startupRecoveryError = ex.Message; }
         core.Navigate($"https://{Host}/index.html");
 
         FitZoom();
@@ -133,6 +152,11 @@ internal sealed class MainForm : Form
             {
                 case "hello":
                     Post("hello", new { settings, version = Application.ProductVersion.Split('+')[0], matches = MatchStore.Load().Take(5), gameMode = GameMode.Status(periodicWifiSpikes), fixesApplied = Fixes.Applied().Count });
+                    if (startupRecoveryError is { } recoveryError)
+                    {
+                        startupRecoveryError = null;
+                        Post("error", new { cmd = "gameModeRecovery", message = recoveryError });
+                    }
                     break;
 
                 case "saveSettings":
@@ -149,14 +173,22 @@ internal sealed class MainForm : Form
                 case "fix":
                 case "undoFix":
                     var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x != "").ToList();
-                    var outcome = await Task.Run(() => Fixes.Run(ids, undo: cmd == "undoFix"));
-                    Post("fixResult", new { outcome, applied = Fixes.Applied().Count });
+                    var fixedResult = await ChangeSystemAsync(() =>
+                    {
+                        var outcome = Fixes.Run(ids, undo: cmd == "undoFix");
+                        return new { outcome, applied = Fixes.Applied().Count };
+                    });
+                    Post("fixResult", fixedResult);
                     break;
 
                 case "undoAllFixes":
-                    var all = Fixes.Applied().Select(r => r.Id).ToList();
-                    var undone = await Task.Run(() => Fixes.Run(all, undo: true));
-                    Post("fixResult", new { outcome = undone, applied = Fixes.Applied().Count });
+                    var undone = await ChangeSystemAsync(() =>
+                    {
+                        var all = Fixes.Applied().Select(r => r.Id).ToList();
+                        var outcome = Fixes.Run(all, undo: true);
+                        return new { outcome, applied = Fixes.Applied().Count };
+                    });
+                    Post("fixResult", undone);
                     break;
 
                 case "netTest":
@@ -183,21 +215,22 @@ internal sealed class MainForm : Form
                     break;
 
                 case "gameModeOn":
-                    Post("gameMode", await Task.Run(() => GameMode.Apply(periodicWifiSpikes)));
+                    Post("gameMode", await ChangeSystemAsync(() => GameMode.Apply(periodicWifiSpikes)));
                     break;
 
                 case "gameModeOff":
-                    Post("gameMode", await Task.Run(() => GameMode.Restore(periodicWifiSpikes)));
+                    Post("gameMode", await ChangeSystemAsync(() => GameMode.Restore(periodicWifiSpikes)));
                     break;
 
                 case "play":
                     // Console flow: get the PC ready, then start the game. Restores by itself when the game closes.
-                    Post("gameMode", await Task.Run(() => GameMode.Apply(periodicWifiSpikes)));
-                    Launch();
+                    await PlayAsync();
                     break;
 
                 case "launchRocketLeague":
-                    Launch();
+                    await systemChanges.WaitAsync();
+                    try { ReportLaunch(LaunchRocketLeague()); }
+                    finally { systemChanges.Release(); }
                     break;
 
                 case "matches":
@@ -215,13 +248,42 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            Post("error", new { cmd, message = ex.Message });
+            ReportError(cmd, ex);
         }
     }
 
-    private void Launch()
+    private async Task<T> ChangeSystemAsync<T>(Func<T> change)
     {
-        var launched = LaunchRocketLeague();
+        await systemChanges.WaitAsync();
+        try { return await Task.Run(change); }
+        finally { systemChanges.Release(); }
+    }
+
+    private async Task PlayAsync()
+    {
+        await systemChanges.WaitAsync();
+        try
+        {
+            var wasActive = GameMode.IsActive;
+            var launched = false;
+            try
+            {
+                Post("gameMode", await Task.Run(() => GameMode.Apply(periodicWifiSpikes)));
+                launched = LaunchRocketLeague();
+                ReportLaunch(launched);
+            }
+            finally
+            {
+                // A failed launch must not strand changes made for this attempt, or undo a manual session.
+                if (!launched && !wasActive && GameMode.IsActive && !RocketLeague.IsRunning())
+                    Post("gameMode", await Task.Run(() => GameMode.Restore(periodicWifiSpikes)));
+            }
+        }
+        finally { systemChanges.Release(); }
+    }
+
+    private void ReportLaunch(bool launched)
+    {
         Post("launch", new { ok = launched });
         if (launched) WindowState = FormWindowState.Minimized; // out of the game's way; the page suspends itself
     }
@@ -232,6 +294,21 @@ internal sealed class MainForm : Form
     /// </summary>
     private async void WatchGame()
     {
+        if (checkingGame) return;
+        checkingGame = true;
+        try
+        {
+            await systemChanges.WaitAsync();
+            try { await WatchGameAsync(); }
+            finally { systemChanges.Release(); }
+        }
+        catch (Exception ex) { ReportError("gameWatch", ex); }
+        finally { checkingGame = false; }
+    }
+
+    private async Task WatchGameAsync()
+    {
+        if (IsDisposed || Disposing) return;
         if (RocketLeague.IsRunning())
         {
             sawGame = true;
@@ -242,30 +319,61 @@ internal sealed class MainForm : Form
         sawGame = false;
 
         MatchReport? report = null;
+        var reportSaved = false;
+        Exception? reportError = null;
         if (recorder is not null)
         {
             var r = recorder;
             recorder = null;
-            report = await Task.Run(r.Finish);
-            MatchStore.Add(report);
+            try
+            {
+                report = await Task.Run(r.Finish);
+                MatchStore.Add(report);
+                reportSaved = true;
+            }
+            catch (Exception ex)
+            {
+                reportError = ex;
+                try { r.Dispose(); } catch { }
+            }
         }
 
         GameModeStatus? status = null;
-        if (GameMode.IsActive) status = await Task.Run(() => GameMode.Restore(periodicWifiSpikes));
+        Exception? restoreError = null;
+        // Recording or storing a report must never prevent recovery. Recheck after awaiting the recorder:
+        // the user may already have started another game outside BoostOS.
+        var gameClosed = !RocketLeague.IsRunning();
+        sawGame = !gameClosed;
+        if (gameClosed && GameMode.IsActive)
+        {
+            try { status = await Task.Run(() => GameMode.Restore(periodicWifiSpikes)); }
+            catch (Exception ex) { restoreError = ex; }
+        }
 
         // Come back to the front only if BoostOS stepped aside for this match.
-        if (WindowState == FormWindowState.Minimized)
+        if (gameClosed && WindowState == FormWindowState.Minimized && !IsDisposed && !Disposing)
         {
             WindowState = FormWindowState.Normal;
             SetFullscreen(fullscreen);
             Activate();
         }
         if (status is not null) Post("gameMode", status);
-        if (report is { Minutes: >= 1 }) Post("matchReport", new { report, previous = MatchStore.Load().Skip(1).FirstOrDefault() });
-        if (status is not null) Post("notice", new { message = I18n.L("המשחק נסגר. המחשב חזר למצב הרגיל.", "The game closed. Your PC is back to normal.") });
+        if (report is { Minutes: >= 1 }) Post("matchReport", new { report, previous = MatchStore.Load().Skip(reportSaved ? 1 : 0).FirstOrDefault() });
+        if (status is not null) Post("notice", new { message = status.Active
+            ? I18n.L("המשחק נסגר. חלק מהשינויים עדיין ממתינים לשחזור; אפשר לנסות שוב בלחצן השחזור.", "The game closed. Some changes still need recovery; use the restore button to retry.")
+            : I18n.L("המשחק נסגר. המחשב חזר למצב הרגיל.", "The game closed. Your PC is back to normal.") });
+        if (reportError is not null) ReportError("matchReport", reportError);
+        if (restoreError is not null) ReportError("gameModeRecovery", restoreError);
     }
 
     private bool sawGame;
+
+    private void ReportError(string cmd, Exception error)
+    {
+        Debug.WriteLine($"{cmd}: {error}");
+        try { Post("error", new { cmd, message = error.Message }); }
+        catch (Exception postError) { Debug.WriteLine(postError); } // WebView2 may already be closing; never escape an async event handler.
+    }
 
     private void Post(string type, object data)
     {

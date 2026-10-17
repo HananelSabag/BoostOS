@@ -174,6 +174,8 @@ const GLYPHS = {
 
 /** Hints for the current screen: [['select', label], ['back', label], ...] */
 export function renderHints() {
+  const gp = padSnapshot();
+  $('#pad-status').textContent = gp ? t(kindOf(gp) === 'ps' ? 'pad.connected' : 'pad.connectedGeneric') : '';
   const list = nav.hints();
   $('#hints').innerHTML = list.map(([g, label]) => `<span>${GLYPHS[g][nav.kind]} ${label}</span>`).join('');
 }

@@ -113,7 +113,7 @@ function renderReport() {
     [`${n(m.gpuLimitedPct)}%`, t('report.limited'), ''],
     [`${n(m.busiestCoreAvg)}%`, t('report.core'), delta(m.busiestCoreAvg, prev?.busiestCoreAvg, true, '%')],
   ];
-  const lines = [t(m.bottleneck === 'cpu' ? 'report.cpu' : m.bottleneck === 'gpu' ? 'report.gpu' : 'report.none2')];
+  const lines = [t(({ cpu: 'report.cpu', gpu: 'report.gpu', none: 'report.none2' })[m.bottleneck] ?? 'report.unknown')];
   if (m.gpuTempMax >= 85) lines.push(t('report.hot', { t: Math.round(m.gpuTempMax) }));
 
   box.innerHTML = `

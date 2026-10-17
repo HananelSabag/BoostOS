@@ -142,7 +142,8 @@ internal sealed class MatchRecorder : IDisposable
         }
         var util = Avg(x => x.GpuUtil);
         var busiest = Avg(x => x.BusiestCore) ?? 0;
-        var limited = play.Count(x => !double.IsNaN(x.GpuUtil)) is var n and > 0 ? Math.Round(100.0 * play.Count(x => x.GpuLimited) / n, 0) : (double?)null;
+        var validGpu = play.Where(x => double.IsFinite(x.GpuUtil)).ToList();
+        var limited = validGpu.Count > 0 ? Math.Round(100.0 * validGpu.Count(x => x.GpuLimited) / validGpu.Count, 0) : (double?)null;
 
         // Rocket League at a high frame rate is usually held back by one CPU core, not the GPU.
         var bottleneck = util switch

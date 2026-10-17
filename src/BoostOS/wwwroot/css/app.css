@@ -1,12 +1,6 @@
 /* BoostOS — a night arena under floodlights. Blue team, orange team, and the boost meter.
-   Motion budget: transform / opacity / filter only, every loop pauses when the page is hidden,
+   Motion budget: short transforms / opacity, every loop pauses when the page is hidden,
    and the host suspends the whole page once a match starts. */
-
-@property --accent {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: #3D8BFF;
-}
 
 :root {
   --night: #0B1838;
@@ -34,7 +28,6 @@
   --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
   --dir: -1; /* RTL: the "forward" direction is to the left */
   --accent: var(--blue);
-  transition: --accent 700ms var(--ease-out);
 }
 
 :root[dir="ltr"] { --dir: 1; }
@@ -82,7 +75,6 @@ button { font: inherit; color: inherit; }
   width: 90vmax;
   height: 70vmax;
   border-radius: 50%;
-  filter: blur(80px);
   opacity: 0.5;
 }
 /* The main floodlight swings over to whatever you focus (positioned from JS), then rests: no frames while idle. */
@@ -250,14 +242,14 @@ button { font: inherit; color: inherit; }
 /* ---------- Screens and their transitions ---------- */
 
 main { position: relative; height: 100%; z-index: 1; }
-.screen { position: absolute; inset: 0; padding: 100px calc(var(--gutter) + 20px) 80px var(--gutter); }
+.screen { position: absolute; inset: 0; padding: 100px calc(var(--gutter) + 20px) 80px var(--gutter); overflow-y: auto; overflow-x: hidden; }
 :root[dir="ltr"] .screen { padding-inline: var(--gutter) calc(var(--gutter) + 20px); }
 .screen[hidden] { display: none; }
 
 ::view-transition-old(root) { animation: screen-out 200ms var(--ease-in) both; }
 ::view-transition-new(root) { animation: screen-in 380ms var(--ease-out) both; }
-@keyframes screen-out { to { opacity: 0; transform: scale(0.97); filter: blur(4px); } }
-@keyframes screen-in { from { opacity: 0; transform: scale(1.03); filter: blur(6px); } }
+@keyframes screen-out { to { opacity: 0; transform: scale(0.98); } }
+@keyframes screen-in { from { opacity: 0; transform: scale(1.02); } }
 
 /* After boot the tiles arrive one by one, then the hub. */
 .home.entering .tile { animation: tile-in 560ms var(--ease-out) both; animation-delay: calc(var(--i, 0) * 70ms + 60ms); }
@@ -274,18 +266,22 @@ main { position: relative; height: 100%; z-index: 1; }
 
 /* ---------- Home: the rail ---------- */
 
-.home { display: grid; grid-template-rows: auto 1fr; gap: clamp(26px, 4.5vh, 56px); }
+.home { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; gap: clamp(26px, 4.5vh, 56px); }
 
 .rail {
   display: flex;
   align-items: flex-end;
   gap: clamp(14px, 1.3vw, 22px);
-  padding-top: clamp(26px, 6vh, 70px);
-  min-height: calc(clamp(140px, 11.5vw, 222px) + 60px);
+  padding: clamp(26px, 6vh, 70px) 12px 22px;
+  margin-inline: -12px;
+  min-width: 0;
+  overflow-x: auto;
+  min-height: calc(clamp(200px, 15.5vw, 304px) + clamp(26px, 6vh, 70px) + 22px);
 }
 
 .tile {
   position: relative;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -367,14 +363,10 @@ main { position: relative; height: 100%; z-index: 1; }
 
 .tile-tool { width: clamp(108px, 8vw, 156px); }
 .rail.folder-open { gap: clamp(10px, 0.9vw, 16px); }
-.rail.folder-open .tile-play { width: clamp(140px, 11vw, 214px); }
-.tile-tool.unfold { animation: unfold 340ms var(--ease-out) both; animation-delay: calc(var(--i) * 45ms); }
-.tile-tool.fold { animation: fold 170ms var(--ease-in) both; }
+.tile-tool.unfold { animation: unfold 180ms var(--ease-out) backwards; animation-delay: calc(var(--i) * 22ms); }
 @keyframes unfold {
-  from { opacity: 0; transform: translateX(calc(var(--dir) * -60px * (var(--i) + 1))) scale(0.7); }
-}
-@keyframes fold {
-  to { opacity: 0; transform: translateX(calc(var(--dir) * -50px * (var(--i) + 1))) scale(0.72); }
+  /* Individual translate leaves the focus transform free, including during the reveal. */
+  from { opacity: 0; translate: calc(var(--dir) * -18px) 0; }
 }
 
 /* ---------- Home: the hub under the rail ---------- */
@@ -728,6 +720,7 @@ main { position: relative; height: 100%; z-index: 1; }
 
 .settings { display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .settings-body { display: grid; grid-template-columns: minmax(0, 46rem) minmax(0, 1fr); gap: clamp(28px, 5vw, 90px); min-height: 0; }
+.settings-body { overflow-y: auto; padding: 6px; margin: -6px; }
 .rows { display: grid; align-content: start; gap: 4px; }
 .row {
   display: grid;
@@ -801,17 +794,25 @@ main { position: relative; height: 100%; z-index: 1; }
 /* ---------- Smaller windows ---------- */
 
 @media (max-width: 1180px) {
-  .hub { grid-template-columns: 1fr; }
-  .readiness { justify-content: flex-start; }
+  .hub { grid-template-columns: minmax(0, 1fr) auto; gap: 24px; }
+  .readiness { flex-direction: column-reverse; align-items: flex-start; gap: 16px; max-width: 260px; }
+  .readiness .fix { max-width: 100%; }
+  .home .gauge { --size: 170px !important; }
   .net-bottom, .settings-body { grid-template-columns: 1fr; }
+}
+@media (max-height: 760px) {
+  .home { gap: 24px; }
+  .rail { padding-top: 26px; min-height: calc(clamp(200px, 15.5vw, 304px) + 48px); }
 }
 
 /* Reduced motion: keep fades and state colour, drop travel, drift, sheen and blur. */
 @media (prefers-reduced-motion: reduce) {
   .flood-a { transition: none; }
+  .g-fill { transition: none; }
   .tile::after { display: none; }
-  .tile:focus { transform: none; }
-  .tile-tool.unfold, .tile-tool.fold, .home.entering .tile, .home.entering .hub, .hub-main.swap { animation-name: fade; }
+  .tile:focus, .tile:active { transform: none; }
+  .tile-tool.unfold { animation: none; }
+  .home.entering .tile, .home.entering .hub, .hub-main.swap { animation-name: fade; }
   ::view-transition-old(root), ::view-transition-new(root) { animation: fade 150ms both; }
   .boot .b-fill { animation-duration: 1ms; }
   .boot-word { animation-duration: 150ms; letter-spacing: 0.04em; }

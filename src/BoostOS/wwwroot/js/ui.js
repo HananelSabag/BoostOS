@@ -37,6 +37,7 @@ export const icon = name => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="tr
 export const valueHtml = v => String(v ?? '').split(' · ').map(p => `<bdi>${esc(p)}</bdi>`).join('<span class="sep" aria-hidden="true"></span>');
 
 let gaugeIds = 0;
+const gaugeFrames = new WeakMap();
 export function gauge(size, label) {
   const id = `g${++gaugeIds}`;
   return `<div class="gauge" style="--size:${size}px" role="img">
@@ -57,18 +58,28 @@ export function setGauge(host, score, label) {
   g.querySelector('.g-label').textContent = label;
   g.setAttribute('aria-label', score == null ? label : `${label}: ${score}/100`);
   g.classList.toggle('full', score === 100);
-  if (score == null) { fill.style.strokeDashoffset = 100; num.textContent = '--'; return; }
+  if (score == null) {
+    cancelAnimationFrame(gaugeFrames.get(g));
+    gaugeFrames.delete(g);
+    delete g.dataset.score;
+    fill.style.strokeDashoffset = 100;
+    num.textContent = '--';
+    return;
+  }
   if (g.dataset.score === String(score)) return;
+  cancelAnimationFrame(gaugeFrames.get(g));
+  const from = Number(num.textContent) || 0;
   g.dataset.score = score;
   fill.style.strokeDashoffset = 100 - score;
   if (reduceMotion) { num.textContent = score; return; }
   const start = performance.now();
   const step = now => {
     const p = Math.min(1, (now - start) / 1200);
-    num.textContent = Math.round(score * (1 - Math.pow(1 - p, 3)));
-    if (p < 1) requestAnimationFrame(step);
+    num.textContent = Math.round(from + (score - from) * (1 - Math.pow(1 - p, 3)));
+    if (p < 1) gaugeFrames.set(g, requestAnimationFrame(step));
+    else gaugeFrames.delete(g);
   };
-  requestAnimationFrame(step);
+  gaugeFrames.set(g, requestAnimationFrame(step));
 }
 
 let toastTimer;

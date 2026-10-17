@@ -25,6 +25,11 @@ const screen = {
       this.refresh();
       draw();
     });
+    on('error', e => {
+      if (e.cmd !== 'netTest') return;
+      net.running = false;
+      this.refresh();
+    });
     window.addEventListener('resize', () => requestAnimationFrame(draw));
   },
 

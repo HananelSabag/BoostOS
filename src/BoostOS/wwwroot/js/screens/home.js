@@ -27,18 +27,22 @@ export default {
     folderOpen = false;
     hubFor = null;
     root.innerHTML = `
-      <div class="rail" role="list">
-        <button class="tile tile-play" data-nav data-default data-tile="play" role="listitem" style="--i:0">
+      <div class="rail">
+        <button class="tile tile-play" data-nav data-default data-tile="play" style="--i:0">
           ${icon('ball')}<span class="tile-name">${t('tile.play')}<span class="tile-sub">${t('tile.play.sub')}</span></span>
         </button>
-        <button class="tile tile-game" data-nav data-tile="game" role="listitem" style="--i:1">
+        <button class="tile tile-game" data-nav data-tile="game" style="--i:1">
           <span class="led"></span>${icon('rocket')}<span class="tile-name">${t('tile.game')}<span class="tile-sub" id="game-sub">${t('tile.game.off')}</span></span>
         </button>
-        <button class="tile tile-folder" data-nav data-tile="diag" data-sfx="none" role="listitem" aria-expanded="false" style="--i:2">
+        <button class="tile tile-folder" data-nav data-tile="diag" data-sfx="none" aria-expanded="false" aria-controls="${TOOLS.map(x => `tool-${x.id}`).join(' ')}" style="--i:2">
           <span class="folder-glyphs">${TOOLS.map(x => `<span>${icon(x.icon)}</span>`).join('')}</span>
           <span class="tile-name">${t('tile.diag')}<span class="tile-sub">${t('tile.diag.sub')}</span></span>
         </button>
-        <button class="tile tile-settings" data-nav data-tile="settings" role="listitem" style="--i:3">
+        ${TOOLS.map((x, i) => `
+          <button id="tool-${x.id}" class="tile tile-tool" data-nav data-tile="${x.id}" hidden disabled style="--i:${i}">
+            ${icon(x.icon)}<span class="tile-name">${t(`tool.${x.id}`)}</span>
+          </button>`).join('')}
+        <button class="tile tile-settings" data-nav data-tile="settings" style="--i:3">
           ${icon('gear')}<span class="tile-name">${t('tile.settings')}</span>
         </button>
       </div>
@@ -50,19 +54,14 @@ export default {
         </aside>
       </div>`;
 
-    root.addEventListener('focusin', e => {
+    // build runs again after a language change; replace delegated handlers instead of stacking them.
+    root.removeEventListener('focusin', handleFocus);
+    root.addEventListener('focusin', handleFocus);
+    root.onclick = e => {
       const tile = e.target.closest('.tile');
-      if (!tile) return;
-      const id = tile.dataset.tile;
-      if (folderOpen && id !== 'diag' && !tile.classList.contains('tile-tool')) closeFolder(false);
-      setAccent(tile.classList.contains('tile-tool') ? 'tool' : id);
-      aimLight(tile);
-      renderHub(id);
-    });
-    root.addEventListener('click', e => {
-      const tile = e.target.closest('.tile');
-      if (tile) activate(tile.dataset.tile);
-    });
+      if (tile) activate(tile.dataset.tile, e.detail === 0);
+    };
+    $('#hub-main', root).onanimationend = e => e.currentTarget.classList.remove('swap');
     this.refresh();
   },
 
@@ -112,14 +111,25 @@ export default {
 const issuesOf = r => r.sections.flatMap(s => s.checks).filter(c => c.status === 'bad' || c.status === 'warn')
   .sort((a, b) => (a.status === 'bad' ? 0 : 1) - (b.status === 'bad' ? 0 : 1));
 
-function activate(id) {
+function handleFocus(e) {
+  const tile = e.target.closest('.tile');
+  if (!tile) return;
+  const id = tile.dataset.tile;
+  setAccent(tile.classList.contains('tile-tool') ? 'tool' : id);
+  aimLight(tile);
+  renderHub(id);
+}
+
+function activate(id, focusFirstTool) {
+  // Collapsing on focus moves the target between pointer-down and click, cancelling mouse activation.
+  if (folderOpen && id !== 'diag' && !TOOLS.some(x => x.id === id)) closeFolder(false);
   switch (id) {
     case 'play':
       send('play');
       toast(t('game.launching'));
       break;
     case 'diag':
-      if (folderOpen) closeFolder(true); else openFolder(true);
+      if (folderOpen) closeFolder(true); else openFolder(focusFirstTool);
       break;
     case 'game': case 'settings': case 'scan': case 'net': case 'pad': case 'mouse':
       ctx.show(id);
@@ -134,10 +144,7 @@ function openFolder(focusFirstTool) {
   folder.classList.add('open');
   folder.parentElement.classList.add('folder-open');
   folder.setAttribute('aria-expanded', 'true');
-  folder.insertAdjacentHTML('afterend', TOOLS.map((x, i) => `
-    <button class="tile tile-tool unfold" data-nav data-tile="${x.id}" role="listitem" style="--i:${i}">
-      ${icon(x.icon)}<span class="tile-name">${t(`tool.${x.id}`)}</span>
-    </button>`).join(''));
+  $$('.tile-tool', root).forEach(x => { x.hidden = false; x.disabled = false; x.classList.add('unfold'); });
   sfx.open();
   ctx.renderHints();
   if (focusFirstTool) focusEl($('.tile-tool', root));
@@ -154,9 +161,8 @@ function closeFolder(refocus) {
   if (refocus) focusEl(folder);
   sfx.close();
   ctx.renderHints();
-  if (reduceMotion) { tools.forEach(x => x.remove()); return; }
-  tools.forEach(x => { x.classList.remove('unfold'); x.classList.add('fold'); x.disabled = true; });
-  setTimeout(() => tools.forEach(x => x.remove()), 200);
+  // Hide synchronously so a rapid reopen cannot focus a disabled, outgoing copy of a tool.
+  tools.forEach(x => { x.hidden = true; x.disabled = true; x.classList.remove('unfold'); });
 }
 
 /** The hub under the rail: what the focused tile does, plus the facts that matter for it. */
@@ -206,8 +212,6 @@ function renderHub(id, quiet = false) {
     <p class="hub-text">${esc(text)}</p>
     ${facts.length ? `<div class="hub-facts">${facts.map(([b, s]) => `<div><b><bdi>${esc(b)}</bdi></b><span>${esc(s)}</span></div>`).join('')}</div>` : ''}`;
   if (!quiet && hubFor !== id && !reduceMotion) {
-    main.classList.remove('swap');
-    void main.offsetWidth; // restart the animation
     main.classList.add('swap');
   }
   hubFor = id;

@@ -23,6 +23,11 @@ export default {
       if (done.length) { sfx.on(); toast(t('scan.fixedToast', { n: done.length })); }
       ctx.startScan();
     });
+    on('error', e => {
+      if (!pendingFix || !['fix', 'undoFix'].includes(e.cmd)) return;
+      pendingFix = null;
+      this.refresh();
+    });
   },
 
   build(el) {
@@ -55,10 +60,10 @@ export default {
       const ids = fixable(ctx.app.report).map(c => c.fix.id);
       if (ids.length) runFix(ids, $('#fix-all', root));
     });
-    root.addEventListener('click', e => {
+    root.onclick = e => {
       const b = e.target.closest('[data-fix]');
       if (b) runFix([b.dataset.fix], b);
-    });
+    };
     this.refresh();
   },
 
@@ -70,18 +75,18 @@ export default {
 
   refresh() {
     if (!root) return;
-    const { report, scanning } = ctx.app;
+    const { report, scanning, scanError } = ctx.app;
     const list = $('#scan-list', root);
     const busy = scanning || !report;
-    $('#rescan', root).disabled = busy;
-    setGauge($('#scan-gauge', root), busy ? null : report.score, busy ? t('gauge.scanning') : t('gauge.label'));
+    $('#rescan', root).disabled = scanning;
+    setGauge($('#scan-gauge', root), busy ? null : report.score, scanning ? t('gauge.scanning') : t('gauge.label'));
 
     if (busy) {
       $('#scan-meta', root).textContent = '';
       $('#scan-tally', root).innerHTML = '';
       $('#scan-index', root).innerHTML = '';
       $('#fix-all', root).hidden = true;
-      list.innerHTML = `<p class="empty">${t('scan.loading')}</p>`;
+      list.innerHTML = `<p class="empty">${scanError ? esc(t('error', { msg: scanError })) : t('scan.loading')}</p>`;
       return;
     }
 
