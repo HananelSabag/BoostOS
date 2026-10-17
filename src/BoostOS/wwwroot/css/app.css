@@ -712,9 +712,41 @@ main { position: relative; height: 100%; z-index: 1; }
 .report-grid b { font: 700 2.2rem/1 var(--display); font-variant-numeric: tabular-nums; }
 .report-grid span { color: var(--ink-dim); font-size: 0.92rem; font-weight: 600; }
 .delta { font: 600 0.85rem var(--body); margin-inline-start: 6px; }
-.delta.better { color: var(--ok); }
-.delta.worse { color: var(--warn); }
+.report-grid .delta { color: var(--ink-dim); }
 .report p { margin: 0; color: var(--ink-dim); max-width: 70ch; }
+.report h4 { margin: 0; font: 700 1.6rem/1.1 var(--display); }
+.report-limits { display: grid; gap: 12px; padding: 18px 20px; border: 1px solid var(--line-bright); border-inline-start: 4px solid var(--info); border-radius: 14px; background: var(--surface); }
+.report-limits.has-limits { border-inline-start-color: var(--warn); }
+.report-limit-heading { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.report-limit-heading > .ic { flex: 0 0 24px; width: 24px; height: 24px; color: var(--info); }
+.has-limits .report-limit-heading > .ic { color: var(--warn); }
+.report-limit-heading h4 { flex: 1 1 200px; }
+.report-limit-number { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font: 700 2.6rem/1 var(--display); font-variant-numeric: tabular-nums; }
+.has-limits .report-limit-number { color: var(--warn); }
+.report-limit-number small { color: var(--ink-dim); font: 600 0.9rem/1.3 var(--body); }
+.report-reasons { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 20px; margin: 2px 0 0; }
+.report-reasons > div { display: grid; gap: 2px; }
+.report-reasons dt { font-size: 0.95rem; color: var(--ink-dim); }
+.report-reasons dd { margin: 0; font: 700 1.8rem/1 var(--display); font-variant-numeric: tabular-nums; }
+.report .report-reason-note { font-size: 0.9rem; }
+.report .report-reason-missing { color: var(--ink); }
+.report .report-next { border-inline-start: 2px solid var(--warn); padding-inline-start: 12px; color: var(--ink); }
+.report-load, .report-context { display: grid; gap: 8px; }
+.report-context { padding-block-start: 14px; border-block-start: 1px solid var(--line); font-size: 0.92rem; }
+.report .report-storage-warning { color: var(--warn); }
+.report .report-comparison, .report .report-timeline-missing { font-size: 0.92rem; }
+.report-timeline { margin: 0; display: grid; gap: 14px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 14px; }
+.report-timeline figcaption { display: grid; gap: 6px; }
+.report-timeline figcaption p { font-size: 0.92rem; }
+.report-trace-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; font-size: 0.95rem; }
+.report-trace-heading span { color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.report-trace svg { display: block; width: 100%; height: 104px; overflow: visible; direction: ltr; }
+.report-trace svg text { fill: var(--ink-faint); font: 12px var(--body); font-variant-numeric: tabular-nums; }
+.report-trace-grid { fill: none; stroke: var(--line); stroke-width: 1; }
+.report-trace-line { fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.report-trace.temperature .report-trace-line { stroke: var(--orange); }
+.report-trace.utilisation .report-trace-line { stroke: var(--blue); }
+.report-trace-time { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-inline-start: 38px; font-size: 0.85rem; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
 
 /* ---------- Settings ---------- */
 

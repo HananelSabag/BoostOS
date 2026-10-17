@@ -1,94 +1,125 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using BoostOS.Core;
 
 namespace BoostOS.Game;
 
-public sealed record MatchSample(double GpuUtil, double GpuTemp, double GpuClock, double GpuPower, bool GpuLimited, double Cpu, double BusiestCore);
-
-public sealed record MatchReport(
-    DateTime Start, double Minutes, bool GameMode, int Samples,
-    double? GpuUtil, double? GpuTempAvg, double? GpuTempMax, double? GpuClock, double? GpuPower, double? GpuLimitedPct,
-    double CpuAvg, double BusiestCoreAvg, string Bottleneck);
-
 /// <summary>
-/// Watches the PC, not the game, while a match runs: GPU numbers come from the driver (nvidia-smi), CPU numbers from
-/// Windows' own per-core counters. Nothing reads or opens the game process, so Easy Anti-Cheat has nothing to see.
-/// One sample every 2 seconds keeps the cost close to zero.
+/// Samples system counters every two seconds while Rocket League is open, without reading the game process.
+/// CPU collection remains independent of the optional driver stream. Detailed samples are archived at Finish.
 /// </summary>
 internal sealed class MatchRecorder : IDisposable
 {
+    private const int MaxSamples = 43_200; // cap live memory at roughly 24 hours
     private readonly List<MatchSample> samples = [];
     private readonly object gate = new();
-    private readonly DateTime start = DateTime.Now;
+    private readonly object samplingGate = new();
+    private readonly object stopGate = new();
+    private readonly DateTimeOffset start;
+    private readonly Stopwatch clock = Stopwatch.StartNew();
+    private readonly Func<double> elapsed;
+    private readonly Func<long[]?> readCpu;
     private readonly bool gameMode;
-    private readonly Process? smi;
+    private readonly GpuSampleStream gpu = new();
+    private Process? smi;
     private readonly System.Threading.Timer cpuTimer;
-    private (double Cpu, double Busiest) lastCpu;
     private long[]? prevCore;
+    private bool stopped;
+    private bool truncated;
+    private DateTimeOffset? ended;
+    private MatchReport? finalReport;
 
-    public MatchRecorder(bool gameMode)
+    public MatchRecorder(bool gameMode) : this(gameMode, ReadCoreTimes)
     {
-        this.gameMode = gameMode;
-        cpuTimer = new System.Threading.Timer(_ => SampleCpu(), null, 0, 2000);
-
         var exe = Path.Combine(Environment.SystemDirectory, "nvidia-smi.exe");
-        if (!File.Exists(exe)) return;
-        try
+        if (!File.Exists(exe)) exe = @"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe";
+        if (File.Exists(exe)) try
         {
-            smi = Process.Start(new ProcessStartInfo(exe,
-                "--query-gpu=utilization.gpu,temperature.gpu,clocks.gr,power.draw,clocks_event_reasons.active --format=csv,noheader,nounits -lms 2000")
+            smi = new Process
             {
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            });
-            if (smi is null) return;
-            smi.OutputDataReceived += (_, e) => OnGpuLine(e.Data);
+                StartInfo = new ProcessStartInfo(exe,
+                    "--query-gpu=uuid,utilization.gpu,temperature.gpu,clocks.gr,power.draw,clocks_event_reasons.active --format=csv,noheader,nounits -lms 2000")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                },
+                EnableRaisingEvents = true,
+            };
+            smi.OutputDataReceived += (_, e) => AcceptGpuLine(e.Data);
+            smi.ErrorDataReceived += (_, _) => { }; // drain errors so the optional producer cannot block
+            smi.Exited += (_, _) => { lock (gate) gpu.Invalidate(); };
+            if (!smi.Start()) throw new InvalidOperationException("Could not start GPU telemetry");
             smi.BeginOutputReadLine();
+            smi.BeginErrorReadLine();
         }
         catch
         {
-            smi = null; // no GPU numbers, CPU numbers still work
+            try { if (smi is { HasExited: false }) smi.Kill(entireProcessTree: true); } catch { }
+            smi?.Dispose();
+            smi = null;
         }
+        cpuTimer.Change(0, 2000);
     }
 
-    private void OnGpuLine(string? line)
+    // Injected counters/clock keep lifecycle and missing-GPU tests independent of real hardware.
+    internal MatchRecorder(bool gameMode, Func<long[]?> readCpu, Func<double>? elapsed = null,
+        DateTimeOffset? started = null, bool startTimer = false)
     {
-        if (string.IsNullOrWhiteSpace(line)) return;
-        var v = line.Split(',').Select(s => s.Trim()).ToArray();
-        if (v.Length < 5) return;
-        double N(int i) => double.TryParse(v[i], NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : double.NaN;
-        // Throttle reasons that mean "held back": SW power cap 0x4, HW slowdown 0x8, SW thermal 0x20, HW thermal 0x40, power brake 0x80.
-        var reasons = ulong.TryParse(v[4].Replace("0x", ""), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var r) ? r : 0;
-        var limited = (reasons & 0xEC) != 0;
-        lock (gate)
-            samples.Add(new MatchSample(N(0), N(1), N(2), N(3), limited, lastCpu.Cpu, lastCpu.Busiest));
+        this.gameMode = gameMode;
+        this.readCpu = readCpu;
+        this.elapsed = elapsed ?? (() => clock.Elapsed.TotalSeconds);
+        start = started ?? DateTimeOffset.Now;
+        cpuTimer = new System.Threading.Timer(_ => SampleNow(), null, startTimer ? 0 : Timeout.Infinite, 2000);
     }
 
-    private void SampleCpu()
+    internal void AcceptGpuLine(string? line)
     {
-        var now = ReadCoreTimes();
-        if (now is null) return;
-        if (prevCore is not null)
+        lock (gate) { if (!stopped) gpu.Accept(line, elapsed()); }
+    }
+
+    internal void SampleNow()
+    {
+        lock (samplingGate)
         {
+            lock (gate) { if (stopped) return; }
+            long[]? now;
+            try { now = readCpu(); } catch { now = null; }
             double totalBusy = 0, totalAll = 0, busiest = 0;
-            for (var c = 0; c < now.Length / 3; c++)
+            if (now is not null && prevCore is not null && now.Length == prevCore.Length)
             {
-                var idle = now[c * 3] - prevCore[c * 3];
-                var all = (now[c * 3 + 1] - prevCore[c * 3 + 1]) + (now[c * 3 + 2] - prevCore[c * 3 + 2]); // kernel includes idle
-                if (all <= 0) continue;
-                var busy = all - idle;
-                totalBusy += busy;
-                totalAll += all;
-                busiest = Math.Max(busiest, 100.0 * busy / all);
+                for (var c = 0; c < now.Length / 3; c++)
+                {
+                    var idle = now[c * 3] - prevCore[c * 3];
+                    var all = (now[c * 3 + 1] - prevCore[c * 3 + 1]) + (now[c * 3 + 2] - prevCore[c * 3 + 2]);
+                    if (all <= 0 || idle < 0 || idle > all) continue;
+                    var busy = all - idle;
+                    totalBusy += busy;
+                    totalAll += all;
+                    busiest = Math.Max(busiest, 100d * busy / all);
+                }
             }
-            lastCpu = (totalAll > 0 ? 100.0 * totalBusy / totalAll : 0, busiest);
-            if (smi is null) lock (gate) samples.Add(new MatchSample(double.NaN, double.NaN, double.NaN, double.NaN, false, lastCpu.Cpu, lastCpu.Busiest));
+            prevCore = now;
+            var seconds = elapsed();
+            lock (gate)
+            {
+                if (stopped) return;
+                var latest = gpu.Current(seconds);
+                if (samples.Count >= MaxSamples) { samples.RemoveAt(0); truncated = true; }
+                samples.Add(new MatchSample(latest?.Util ?? double.NaN, latest?.Temp ?? double.NaN,
+                    latest?.Clock ?? double.NaN, latest?.Power ?? double.NaN,
+                    latest?.Reasons is { } reasons && (reasons & SessionSummary.LimitedMask) != 0,
+                    totalAll > 0 ? 100d * totalBusy / totalAll : double.NaN,
+                    totalAll > 0 ? busiest : double.NaN)
+                {
+                    At = start.AddSeconds(seconds), Seconds = seconds, ClockReasons = latest?.Reasons,
+                    GpuObservedAt = latest is null ? null : start.AddSeconds(latest.ObservedSeconds),
+                    GpuId = gpu.SelectedId, CpuAvailable = totalAll > 0,
+                });
+            }
         }
-        prevCore = now;
     }
 
     [DllImport("ntdll.dll")]
@@ -119,51 +150,63 @@ internal sealed class MatchRecorder : IDisposable
     }
 
     public MatchReport Finish()
+        => FinishTo(Path.Combine(AppSettings.DataDir, "sessions"));
+
+    internal MatchReport FinishTo(string archiveDirectory)
     {
-        Dispose();
-        List<MatchSample> s;
-        lock (gate) s = [.. samples];
-        return Summarize(start, DateTime.Now, gameMode, s);
+        lock (stopGate)
+        {
+            if (finalReport is not null) return finalReport;
+            Dispose();
+            List<MatchSample> saved;
+            lock (gate) saved = [.. samples];
+            var end = ended ?? start;
+            var report = Summarize(start.LocalDateTime, end.LocalDateTime, gameMode, saved) with
+            {
+                Minutes = Math.Round(Math.Max(0, (end - start).TotalMinutes), 1),
+                TelemetryTruncated = truncated,
+            };
+            try
+            {
+                var name = SessionArchive.Save(SessionSummary.Recording(start, end, gameMode, truncated, saved), archiveDirectory);
+                report = report with { TelemetryFile = name };
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Debug.WriteLine(ex);
+                report = report with { TelemetrySaveFailed = true };
+            }
+            return finalReport = report;
+        }
     }
 
     internal static MatchReport Summarize(DateTime start, DateTime end, bool gameMode, IReadOnlyList<MatchSample> s)
-    {
-        // Skip the first 20 seconds: loading screens are not gameplay.
-        var play = s.Count > 15 ? s.Skip(10).ToList() : s.ToList();
-        double? Avg(Func<MatchSample, double> f)
-        {
-            var vals = play.Select(f).Where(x => !double.IsNaN(x)).ToList();
-            return vals.Count == 0 ? null : Math.Round(vals.Average(), 1);
-        }
-        double? Max(Func<MatchSample, double> f)
-        {
-            var vals = play.Select(f).Where(x => !double.IsNaN(x)).ToList();
-            return vals.Count == 0 ? null : Math.Round(vals.Max(), 1);
-        }
-        var util = Avg(x => x.GpuUtil);
-        var busiest = Avg(x => x.BusiestCore) ?? 0;
-        var validGpu = play.Where(x => double.IsFinite(x.GpuUtil)).ToList();
-        var limited = validGpu.Count > 0 ? Math.Round(100.0 * validGpu.Count(x => x.GpuLimited) / validGpu.Count, 0) : (double?)null;
-
-        // Rocket League at a high frame rate is usually held back by one CPU core, not the GPU.
-        var bottleneck = util switch
-        {
-            null => "unknown",
-            >= 90 => "gpu",
-            _ when busiest >= 85 => "cpu",
-            _ => "none",
-        };
-
-        return new MatchReport(start, Math.Round((end - start).TotalMinutes, 1), gameMode, play.Count,
-            util, Avg(x => x.GpuTemp), Max(x => x.GpuTemp), Avg(x => x.GpuClock), Avg(x => x.GpuPower), limited,
-            Avg(x => x.Cpu) ?? 0, busiest, bottleneck);
-    }
+        => SessionSummary.Build(start, end, gameMode, s);
 
     public void Dispose()
     {
-        cpuTimer.Dispose();
-        try { if (smi is { HasExited: false }) smi.Kill(); } catch { }
-        smi?.Dispose();
+        lock (stopGate)
+        {
+            lock (gate)
+            {
+                if (stopped) return;
+                stopped = true;
+                ended = start.AddSeconds(elapsed());
+            }
+            // Timer disposal waits for callbacks; no callback holds stopGate or waits for the UI.
+            cpuTimer.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            lock (samplingGate) { } // drain an explicitly requested sample too
+            try
+            {
+                if (smi is { HasExited: false }) { smi.Kill(entireProcessTree: true); smi.WaitForExit(2000); }
+                try { smi?.CancelOutputRead(); } catch (InvalidOperationException) { }
+                try { smi?.CancelErrorRead(); } catch (InvalidOperationException) { }
+            }
+            catch (InvalidOperationException) { }
+            catch (System.ComponentModel.Win32Exception) { }
+            finally { smi?.Dispose(); }
+            // Late GPU callbacks cannot add samples after stopped was set under gate.
+        }
     }
 }
 
@@ -185,6 +228,6 @@ internal static class MatchStore
         var list = Load();
         list.Insert(0, report);
         Directory.CreateDirectory(AppSettings.DataDir);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(list.Take(20), new JsonSerializerOptions { WriteIndented = true }));
+        SessionArchive.WriteAtomic(FilePath, list.Take(20).ToList());
     }
 }

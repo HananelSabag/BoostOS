@@ -17,11 +17,18 @@ export function send(cmd, extra = {}) {
 const Preview = {
   timers: [],
   settings: { language: 'he', sounds: true, rumble: true, startFullscreen: true, trackMatches: true },
+  async loadMatches() {
+    try {
+      const response = await fetch('dev/matches.sample.json', { cache: 'no-store' });
+      const list = response.ok ? await response.json() : [];
+      return Array.isArray(list) ? list : [];
+    } catch { return []; }
+  },
   async handle(cmd, extra) {
     const later = (type, data, ms = 300) => setTimeout(() => emit(type, data), ms);
     switch (cmd) {
       case 'hello':
-        later('hello', { settings: this.settings, version: 'preview', matches: [], gameMode: { active: false, plan: [], steps: [] }, fixesApplied: 0 }, 0);
+        later('hello', { settings: this.settings, version: 'preview', matches: await this.loadMatches(), gameMode: { active: false, plan: [], steps: [] }, fixesApplied: 0 }, 0);
         break;
       case 'saveSettings':
         this.settings = extra.settings;
@@ -37,7 +44,7 @@ const Preview = {
       case 'gameModeStatus': case 'gameModeOn': case 'gameModeOff':
         later('gameMode', { active: cmd === 'gameModeOn', since: new Date().toISOString(), plan: [{ title: 'Background apps', detail: 'OneDrive, Phone Link', willRun: true }], steps: [{ title: 'OneDrive', detail: 'Closed', result: 'done' }] });
         break;
-      case 'matches': later('matches', []); break;
+      case 'matches': later('matches', await this.loadMatches()); break;
       case 'fix': case 'undoFix': case 'undoAllFixes':
         later('fixResult', { outcome: { done: extra.ids ?? [], failed: [] }, applied: 0 }, 600);
         break;

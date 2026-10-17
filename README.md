@@ -21,6 +21,19 @@ Failed recovery items stay saved for retry. Reports include menus and training a
 
 ## What's inside
 
+### Session recording in v0.3.0
+
+Reports now separate observed GPU clock-limit signals from load-based bottleneck estimates. Power, thermal and hardware
+signals are counted separately when the driver supplies them; older reports retain their aggregate and explicitly say
+that the reason was not recorded. Missing telemetry is shown as unavailable.
+
+With session reports enabled, new recordings retain timestamped samples and the original clock-reason mask under
+`%LOCALAPPDATA%\BoostOS\sessions`. CPU sampling continues if GPU telemetry stops. A session stays on one GPU UUID,
+and stale GPU values are discarded. Reports include coverage counts and separate temperature/load charts. Summary and
+chart exclude the first 20 seconds; the detailed recording retains them. Up to 20 detailed recordings are kept, with a
+43,200-sample memory cap per session; truncation and save failures are visible. The recorder still does not measure FPS
+or frame times, and these changes do not establish an FPS gain.
+
 | | |
 |---|---|
 | **Play** | Turns on Game Mode, then starts Rocket League through Epic Games or Steam. BoostOS minimizes and attempts to suspend its page; the process watcher and optional recorder still run. |
@@ -119,6 +132,7 @@ python tools/serve-preview.py
 ```
 
 Open `http://127.0.0.1:8744/`. The preview uses a fake host and optional sample data, and does not apply Windows fixes.
+An optional ignored `wwwroot/dev/matches.sample.json` array supplies session report fixtures for UI checks.
 The [17 October 2026 review](docs/CODE_REVIEW.he.md) records implemented fixes, remaining limitations and validation.
 
 Headless modes, handy for checking a machine:
