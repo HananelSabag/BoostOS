@@ -6,6 +6,7 @@
 ![.NET 10](https://img.shields.io/badge/.NET-10-512BD4)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4)
 ![Hebrew + English](https://img.shields.io/badge/UI-Hebrew%20%2B%20English-FF8B2B)
+[![License: MIT](https://img.shields.io/badge/License-MIT-43D79A)](LICENSE)
 
 ![BoostOS home screen](docs/home-en.png)
 
@@ -121,6 +122,10 @@ BoostOS.exe --nvidia-json nv.json        # raw NVIDIA profile fields
 - **NVAPI struct versions matter.** Newer NVAPI headers add a 64-bit member to `NVDRS_SETTING` (12,328 bytes); the driver tested here expects the older 12,320-byte layout. BoostOS tries both and reads the value offset from the size it settled on.
 - **Measure before you look.** Idle CPU load is sampled before the scan starts, otherwise the scan measures itself.
 
+## License
+
+[MIT](LICENSE) © 2026 Hananel Sabag. Rocket League is a trademark of Psyonix; BoostOS is an independent project and isn't affiliated with Psyonix, Epic Games or NVIDIA.
+
 ---
 
 ## בעברית
@@ -134,4 +139,4 @@ BoostOS הוא מסך בית בסגנון קונסולה לווינדוס, שמ�
 - **בטוח עם האנטי-צ'יט:** BoostOS לא נוגע בתהליך של המשחק ולא בזיכרון שלו. הוא משנה רק הגדרות של ווינדוס, פרופיל בדרייבר וקובץ ההגדרות של המשחק, ואת כל השינויים אפשר להחזיר בלחיצה אחת.
 - **שפה:** עברית או אנגלית, לפי הבחירה בהגדרות.
 
-נבנה על ידי **חננאל סבג**.
+נבנה על ידי **חננאל סבג**. קוד פתוח ברישיון [MIT](LICENSE).
