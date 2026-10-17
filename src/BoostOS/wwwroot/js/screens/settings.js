@@ -1,15 +1,18 @@
-// Settings: deliberately short. Language, sounds, rumble, full screen, match reports, undo fixes, about.
+// Settings: deliberately short. Language, favourite game, Game Mode on start, sounds, rumble, full screen,
+// session reports, undo fixes, exit, about.
 
 import { $, $$, esc, icon, toast } from '../ui.js';
-import { send, on } from '../bridge.js';
 import { t } from '../i18n.js';
 import { sfx } from '../sound.js';
+import { openDialog, powerMenu } from '../chrome.js';
+import { undoAll, fixBusy } from '../panels/fixrun.js';
+import { favoriteOf } from './home.js';
 
 let ctx;
 let root;
-let undoing = false;
 
 const TOGGLES = [
+  ['gameModeOnPlay', 'settings.gmOnPlay', 'settings.gmOnPlaySub'],
   ['sounds', 'settings.sounds', 'settings.soundsSub'],
   ['rumble', 'settings.rumble', 'settings.rumbleSub'],
   ['startFullscreen', 'settings.fullscreen', 'settings.fullscreenSub'],
@@ -17,24 +20,7 @@ const TOGGLES = [
 ];
 
 const screen = {
-  init(c) {
-    ctx = c;
-    on('fixResult', ({ outcome, applied }) => {
-      if (!undoing) return;
-      undoing = false;
-      ctx.app.fixesApplied = applied;
-      const failed = outcome?.failed ?? [];
-      if (failed.length) { sfx.error(); toast(t('scan.fixFailed', { msg: failed[0].message })); }
-      else toast(t('settings.undone'));
-      screen.refresh();
-      ctx.startScan();
-    });
-    on('error', e => {
-      if (e.cmd !== 'undoAllFixes') return;
-      undoing = false;
-      screen.refresh();
-    });
-  },
+  init(c) { ctx = c; },
 
   build(el) {
     root = el;
@@ -45,30 +31,34 @@ const screen = {
         <h2>${t('settings.title')}</h2>
       </div>
       <div class="settings-body">
-        <div class="rows">
+        <div class="card rows">
           <button class="row" data-nav data-default data-key="language" data-sfx="none">
             <span><b>${t('settings.lang')}</b><small>${t('settings.langSub')}</small></span>
             <span class="choice"><span class="${s.language === 'he' ? 'on' : ''}">עברית</span><span class="${s.language === 'en' ? 'on' : ''}">English</span></span>
+          </button>
+          <button class="row" data-nav id="fav-row">
+            <span><b>${t('settings.favorite')}</b><small>${t('settings.favoriteSub')}</small></span>
+            <span class="row-value" id="fav-value"></span>
           </button>
           ${TOGGLES.map(([key, title, sub]) => `
             <button class="row" data-nav data-key="${key}" role="switch" aria-checked="${!!s[key]}" data-sfx="none">
               <span><b>${t(title)}</b><small>${t(sub)}</small></span>
               <span class="switch ${s[key] ? 'on' : ''}" aria-hidden="true"></span>
             </button>`).join('')}
-          <button class="row" data-nav id="undo-row">
+          <button class="row" data-nav id="undo-row" data-sfx="none">
             <span><b>${t('settings.fixes')}</b><small id="fixes-sub"></small></span>
-            <span class="btn" id="undo-label">${t('settings.undo')}</span>
+            <span class="btn small" id="undo-label">${icon('undo')}${t('settings.undo')}</span>
           </button>
           <button class="row" data-nav id="exit-row">
-            <span><b>${t('settings.exit')}</b></span>
+            <span><b>${t('settings.exit')}</b><small>${t('settings.exitSub')}</small></span>
             ${icon('power')}
           </button>
         </div>
-        <section class="panel about">
+        <section class="card about">
           <h3>BoostOS</h3>
           <p>${t('settings.about')}</p>
           <p class="by">Made by Hananel Sabag</p>
-          <p><bdi>v${esc(ctx.app.version ?? '')}</bdi> · <bdi>github.com/HananelSabag/BoostOS</bdi></p>
+          <p class="ver"><bdi>v${esc(ctx.app.version ?? '')}</bdi> · <bdi>github.com/HananelSabag/BoostOS</bdi></p>
         </section>
       </div>`;
 
@@ -79,15 +69,16 @@ const screen = {
       if (key === 'language') next.language = next.language === 'he' ? 'en' : 'he';
       else next[key] = !next[key];
       (key === 'language' || next[key] ? sfx.on : sfx.off)();
-      ctx.saveSettings(next, key);
+      ctx.saveSettings(next);
     }));
+    $('#fav-row', root).addEventListener('click', chooseFavorite);
     $('#undo-row', root).addEventListener('click', () => {
-      if (!ctx.app.fixesApplied || undoing) return;
-      undoing = true;
+      if (!ctx.app.fixesApplied || fixBusy()) return;
+      undoAll(null);
+      toast(t('fix.undoing'));
       this.refresh();
-      send('undoAllFixes');
     });
-    $('#exit-row', root).addEventListener('click', () => send('exit'));
+    $('#exit-row', root).addEventListener('click', powerMenu);
     this.refresh();
   },
 
@@ -97,8 +88,10 @@ const screen = {
     if (!root) return;
     const n = ctx.app.fixesApplied ?? 0;
     $('#fixes-sub', root).textContent = n ? t('settings.fixesSub', { n }) : t('settings.fixesNone');
-    $('#undo-row', root).disabled = n === 0 || undoing;
+    $('#undo-row', root).disabled = n === 0 || fixBusy();
     $('#undo-label', root).style.visibility = n ? 'visible' : 'hidden';
+    $('#fav-value', root).textContent = favoriteOf(ctx.app)?.name ?? '—';
+    $('#fav-row', root).disabled = ctx.app.games.length < 2;
     const s = ctx.app.settings;
     $$('[role="switch"]', root).forEach(row => {
       const on = !!s[row.dataset.key];
@@ -109,3 +102,18 @@ const screen = {
 };
 
 export default screen;
+
+async function chooseFavorite() {
+  const { games } = ctx.app;
+  if (games.length < 2) return;
+  const fav = favoriteOf(ctx.app);
+  const id = await openDialog({
+    title: t('settings.favorite'),
+    actions: games.slice(0, 8).map(g => ({ id: g.id, label: g.name, icon: g.id === fav?.id ? 'star' : 'gamepad' })),
+    focus: fav?.id,
+  });
+  if (!id || id === fav?.id) return;
+  ctx.saveSettings({ ...ctx.app.settings, favoriteGame: id });
+  sfx.on();
+  toast(t('games.favoriteSet', { name: games.find(g => g.id === id)?.name ?? '' }));
+}

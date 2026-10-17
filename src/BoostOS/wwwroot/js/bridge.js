@@ -1,4 +1,5 @@
-// Messages to and from the C# host. In a plain browser (design preview) a small fake host answers instead.
+// Messages to and from the C# host. In a plain browser (design preview) a small fake host answers instead,
+// from sample files in wwwroot/dev (created with BoostOS.exe --scan-json / --games-json; not shipped).
 
 const host = window.chrome?.webview;
 const listeners = {};
@@ -14,41 +15,58 @@ export function send(cmd, extra = {}) {
   else Preview.handle(cmd, extra);
 }
 
+const json = async (path, fallback) => {
+  try {
+    const r = await fetch(path, { cache: 'no-store' });
+    return r.ok ? await r.json() : fallback;
+  } catch { return fallback; }
+};
+
 const Preview = {
   timers: [],
-  settings: { language: 'he', sounds: true, rumble: true, startFullscreen: true, trackMatches: true },
-  async loadMatches() {
-    try {
-      const response = await fetch('dev/matches.sample.json', { cache: 'no-store' });
-      const list = response.ok ? await response.json() : [];
-      return Array.isArray(list) ? list : [];
-    } catch { return []; }
-  },
+  settings: { language: new URLSearchParams(location.search).get('lang') ?? 'he', sounds: true, rumble: true, startFullscreen: true, trackMatches: true, gameModeOnPlay: true, favoriteGame: null },
+  gameMode: { active: false, plan: [{ title: 'סגירת תוכנות רקע', detail: 'OneDrive, Phone Link', willRun: true }], steps: [] },
+  video: null,
   async handle(cmd, extra) {
     const later = (type, data, ms = 300) => setTimeout(() => emit(type, data), ms);
     switch (cmd) {
       case 'hello':
-        later('hello', { settings: this.settings, version: 'preview', matches: await this.loadMatches(), gameMode: { active: false, plan: [], steps: [] }, fixesApplied: 0 }, 0);
+        later('hello', { settings: this.settings, version: 'preview', matches: await json('dev/matches.sample.json', []), gameMode: this.gameMode, fixesApplied: 1 }, 0);
+        later('games', (await json('dev/games.sample.json', { games: [] })).games, 50);
         break;
+      case 'games': later('games', (await json('dev/games.sample.json', { games: [] })).games, 50); break;
       case 'saveSettings':
         this.settings = extra.settings;
         later('settings', this.settings, 0);
         break;
-      case 'scan': {
-        const report = await fetch('dev/scan.sample.json').then(r => (r.ok ? r.json() : null)).catch(() => null);
-        later('scan', report ?? { generatedAt: new Date().toISOString(), score: 0, machine: 'Preview', sections: [] }, 700);
+      case 'scan':
+        later('scan', await json('dev/scan.sample.json', { generatedAt: new Date().toISOString(), score: 0, machine: 'Preview', sections: [] }), 700);
         break;
-      }
+      case 'fixesApplied': later('fixesApplied', [{ id: 'wifi-roaming', at: new Date().toISOString(), before: '1' }], 50); break;
       case 'netTest': this.fakeNet(extra.seconds); break;
       case 'netCancel': this.stop(); break;
-      case 'gameModeStatus': case 'gameModeOn': case 'gameModeOff':
-        later('gameMode', { active: cmd === 'gameModeOn', since: new Date().toISOString(), plan: [{ title: 'Background apps', detail: 'OneDrive, Phone Link', willRun: true }], steps: [{ title: 'OneDrive', detail: 'Closed', result: 'done' }] });
+      case 'gameModeStatus': later('gameMode', this.gameMode); break;
+      case 'gameModeOn': case 'gameModeOff':
+        this.gameMode = cmd === 'gameModeOn'
+          ? { active: true, since: new Date().toISOString(), plan: this.gameMode.plan, steps: [{ title: 'OneDrive', detail: 'נסגר', result: 'done' }, { title: 'מצב חשמל', detail: 'עבר ל-Best performance', result: 'done' }] }
+          : { active: false, plan: this.gameMode.plan, steps: [] };
+        later('gameMode', this.gameMode, 600);
         break;
-      case 'matches': later('matches', await this.loadMatches()); break;
+      case 'matches': later('matches', await json('dev/matches.sample.json', [])); break;
+      case 'rlVideo': {
+        this.video ??= (await json('dev/games.sample.json', {})).video ?? null;
+        later('rlVideo', this.video);
+        break;
+      }
+      case 'rlVideoSet':
+        for (const [id, v] of Object.entries(extra.changes)) { const s = this.video.settings.find(x => x.id === id); if (s) s.value = v; }
+        this.video.changed = true;
+        later('rlVideo', this.video, 400); later('rlVideoSaved', { undo: false }, 420);
+        break;
       case 'fix': case 'undoFix': case 'undoAllFixes':
         later('fixResult', { outcome: { done: extra.ids ?? [], failed: [] }, applied: 0 }, 600);
         break;
-      case 'play': case 'launchRocketLeague': later('launch', { ok: true }); break;
+      case 'play': case 'launch': later('launch', { ok: true, name: 'Rocket League' }); break;
       default: emit('preview', cmd);
     }
   },

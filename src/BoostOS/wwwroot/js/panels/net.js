@@ -1,6 +1,6 @@
 // Network test: router and internet pinged side by side, drawn live. Blue = router (the Wi-Fi link), orange = internet.
 
-import { $, $$, esc, icon, cssVar, toast } from '../ui.js';
+import { $, $$, esc, cssVar, toast } from '../ui.js';
 import { send, on } from '../bridge.js';
 import { t } from '../i18n.js';
 
@@ -8,7 +8,7 @@ let ctx;
 let root;
 const net = { running: false, secs: 60, samples: { router: [], internet: [] }, result: null };
 
-const screen = {
+const panel = {
   init(c) {
     ctx = c;
     let queued = false;
@@ -22,13 +22,13 @@ const screen = {
     on('netResult', r => {
       net.running = false;
       net.result = r;
-      this.refresh();
+      panel.refresh();
       draw();
     });
     on('error', e => {
       if (e.cmd !== 'netTest') return;
       net.running = false;
-      this.refresh();
+      panel.refresh();
     });
     window.addEventListener('resize', () => requestAnimationFrame(draw));
   },
@@ -36,31 +36,27 @@ const screen = {
   build(el) {
     root = el;
     root.innerHTML = `
-      <div class="screen-head">
-        <button class="back" data-nav aria-label="${t('hint.back')}" data-sfx="none">${icon('back')}</button>
-        <h2>${t('net.title')}</h2>
-        <span class="head-meta">${t('net.meta')}</span>
-      </div>
-      <div class="net-controls">
-        <div class="seg" role="group">
-          ${[30, 60, 120].map(s => `<button class="seg-btn" data-nav data-secs="${s}" aria-pressed="${net.secs === s}">${t(`net.${s}`)}</button>`).join('')}
+      <div class="net">
+        <div class="net-controls">
+          <div class="seg" role="group" aria-label="${t('net.length')}">
+            ${[30, 60, 120].map(s => `<button class="seg-btn" data-nav data-secs="${s}" aria-pressed="${net.secs === s}">${t(`net.${s}`)}</button>`).join('')}
+          </div>
+          <button class="btn primary" data-nav id="net-start"></button>
+          <div class="progress" aria-hidden="true"><div id="net-bar"></div></div>
         </div>
-        <button class="btn primary" data-nav data-default id="net-start"></button>
-        <div class="progress" aria-hidden="true"><div id="net-bar"></div></div>
-      </div>
-      <div class="panel chart-panel">
-        <canvas id="net-chart" role="img"></canvas>
-        <div class="legend">
-          <span class="key key-router">${t('net.keyRouter')}</span>
-          <span class="key key-internet">${t('net.keyInternet')}</span>
-          <span class="key key-lost">${t('net.keyLost')}</span>
+        <div class="card chart-panel">
+          <canvas id="net-chart" role="img" aria-label="${t('net.chart')}"></canvas>
+          <div class="legend">
+            <span class="key key-router">${t('net.keyRouter')}</span>
+            <span class="key key-internet">${t('net.keyInternet')}</span>
+            <span class="key key-lost">${t('net.keyLost')}</span>
+          </div>
         </div>
-      </div>
-      <div class="net-bottom">
-        <div class="stats" id="net-stats"></div>
-        <div class="verdict" id="net-verdict" aria-live="polite"></div>
+        <div class="net-bottom">
+          <div class="stats" id="net-stats"></div>
+          <div class="card verdict" id="net-verdict" aria-live="polite"></div>
+        </div>
       </div>`;
-    $('.back', root).addEventListener('click', () => ctx.back());
     $$('[data-secs]', root).forEach(b => b.addEventListener('click', () => {
       if (net.running) return;
       net.secs = Number(b.dataset.secs);
@@ -73,7 +69,7 @@ const screen = {
       net.result = null;
       net.samples = { router: [], internet: [] };
       send('netTest', { seconds: net.secs });
-      this.refresh();
+      panel.refresh();
       draw();
     });
     this.refresh();
@@ -81,7 +77,7 @@ const screen = {
 
   enter() { requestAnimationFrame(draw); },
   leave() { if (net.running) stop(true); },
-  hints: () => [['select', t('hint.select')], ['back', t('hint.back')], ['full', t('hint.full')]],
+  hints: () => [],
 
   refresh() {
     if (!root) return;
@@ -93,20 +89,20 @@ const screen = {
     progress();
     const v = $('#net-verdict', root);
     const r = net.result;
-    v.className = 'verdict' + (r ? ` s-${r.status}` : '');
+    v.className = 'card verdict' + (r ? ` s-${r.status}` : '');
     v.innerHTML = r
       ? `<h3>${esc(r.headline)}</h3><ul>${r.findings.map(f => `<li class="s-${f.status}"><span class="dot"></span><span>${esc(f.text)}</span></li>`).join('')}</ul>`
       : `<p>${net.running ? t('net.running') : t('net.idle')}</p>`;
   },
 };
 
-export default screen;
+export default panel;
 
 function stop(notify) {
   send('netCancel');
   net.running = false;
   if (notify) toast(t('net.stopped'));
-  screen.refresh();
+  panel.refresh();
 }
 
 const fmt = v => v == null ? '—' : v < 10 ? v.toFixed(1) : String(Math.round(v));
@@ -129,10 +125,10 @@ function renderStats() {
   const r = net.result;
   $('#net-stats', root).innerHTML = [['router', t('net.router')], ['internet', t('net.internet')]].map(([id, label]) => {
     const s = r?.targets.find(x => x.id === id) ?? live(net.samples[id]);
-    if (!s) return '';
+    if (!s) return `<div class="card stat ${id} empty-stat"><h3>${label}</h3><div class="stat-main">—</div></div>`;
     const rows = [[t('net.jitter'), `${fmt(s.jitter)} ms`], [t('net.loss'), `${(s.lossPct ?? 0).toFixed(1)}%`], [t('net.max'), `${fmt(s.max)} ms`]];
     if (s.spikeEvents != null) rows.push([t('net.spikes'), s.periodSeconds ? t('net.every', { n: s.spikeEvents, s: Math.round(s.periodSeconds) }) : String(s.spikeEvents)]);
-    return `<div class="panel stat ${id}">
+    return `<div class="card stat ${id}">
       <h3>${label}${s.address ? ` <bdi>${esc(s.address)}</bdi>` : ''}</h3>
       <div class="stat-main"><bdi>${fmt(s.median)}</bdi><small>${t('net.median')}</small></div>
       <dl class="stat-rows">${rows.map(([k, v]) => `<dt>${k}</dt><dd><bdi>${esc(v)}</bdi></dd>`).join('')}</dl>

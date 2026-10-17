@@ -30,8 +30,23 @@ internal sealed class MatchRecorder : IDisposable
     private DateTimeOffset? ended;
     private MatchReport? finalReport;
 
-    public MatchRecorder(bool gameMode) : this(gameMode, ReadCoreTimes)
+    // Optional system probes; the injected test constructor runs without them.
+    private readonly GameInfo? game;
+    private PingProbe? ping;
+    private CpuClockProbe? cpuClock;
+    private BackgroundCpu? background;
+    private double? ramTotalGb, vramTotalMb;
+    private WifiProbe.Reading? wifi;
+    private int tick;
+    private readonly bool live; // the real probes run (false in tests)
+
+    public MatchRecorder(bool gameMode, GameInfo? game = null) : this(gameMode, ReadCoreTimes)
     {
+        this.game = game;
+        live = true;
+        try { cpuClock = new CpuClockProbe(); } catch { cpuClock = null; }
+        try { background = new BackgroundCpu(game?.Processes ?? []); background.Sample(); } catch { background = null; }
+        try { ping = new PingProbe(Diagnostics.NetworkCheck.FindActiveLink()?.Gateway, elapsed); } catch { ping = null; }
         var exe = Path.Combine(Environment.SystemDirectory, "nvidia-smi.exe");
         if (!File.Exists(exe)) exe = @"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe";
         if (File.Exists(exe)) try
@@ -39,7 +54,7 @@ internal sealed class MatchRecorder : IDisposable
             smi = new Process
             {
                 StartInfo = new ProcessStartInfo(exe,
-                    "--query-gpu=uuid,utilization.gpu,temperature.gpu,clocks.gr,power.draw,clocks_event_reasons.active --format=csv,noheader,nounits -lms 2000")
+                    "--query-gpu=uuid,utilization.gpu,temperature.gpu,clocks.gr,power.draw,clocks_event_reasons.active,memory.used,memory.total --format=csv,noheader,nounits -lms 2000")
                 {
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -102,11 +117,19 @@ internal sealed class MatchRecorder : IDisposable
                 }
             }
             prevCore = now;
+            var n = tick++;
+            double? mhz = null, ram = null;
+            try { mhz = cpuClock?.Read(); } catch { }
+            if (live && MemoryProbe.Read() is { } memory) { ram = memory.UsedPct; ramTotalGb = memory.TotalGb; }
+            // The Wi-Fi link every 10 s and the process list every 30 s: both are cheap, but not free.
+            if (live && n % 5 == 0) try { wifi = WifiProbe.Read(); } catch { wifi = null; }
+            if (n % 15 == 14) try { background?.Sample(); } catch { }
             var seconds = elapsed();
             lock (gate)
             {
                 if (stopped) return;
                 var latest = gpu.Current(seconds);
+                if (latest?.VramTotalMb is { } total) vramTotalMb = total;
                 if (samples.Count >= MaxSamples) { samples.RemoveAt(0); truncated = true; }
                 samples.Add(new MatchSample(latest?.Util ?? double.NaN, latest?.Temp ?? double.NaN,
                     latest?.Clock ?? double.NaN, latest?.Power ?? double.NaN,
@@ -117,6 +140,9 @@ internal sealed class MatchRecorder : IDisposable
                     At = start.AddSeconds(seconds), Seconds = seconds, ClockReasons = latest?.Reasons,
                     GpuObservedAt = latest is null ? null : start.AddSeconds(latest.ObservedSeconds),
                     GpuId = gpu.SelectedId, CpuAvailable = totalAll > 0,
+                    CpuMhz = mhz, RamPct = ram, VramMb = latest?.VramMb,
+                    RouterMs = ping?.LastRouter, InternetMs = ping?.LastInternet,
+                    WifiQuality = wifi?.Quality, WifiRssi = wifi?.Rssi, WifiRxMbps = wifi?.RxMbps,
                 });
             }
         }
@@ -161,10 +187,20 @@ internal sealed class MatchRecorder : IDisposable
             List<MatchSample> saved;
             lock (gate) saved = [.. samples];
             var end = ended ?? start;
+            var pings = ping?.Results() ?? [];
+            try { background?.Sample(); } catch { }
             var report = Summarize(start.LocalDateTime, end.LocalDateTime, gameMode, saved) with
             {
                 Minutes = Math.Round(Math.Max(0, (end - start).TotalMinutes), 1),
                 TelemetryTruncated = truncated,
+                GameId = game?.Id,
+                GameName = game?.Name,
+                CpuBaseMhz = cpuClock?.BaseMhz is > 0 ? cpuClock.BaseMhz : null,
+                RamTotalGb = ramTotalGb,
+                VramTotalMb = vramTotalMb,
+                Router = SessionSummary.Ping(pings, "router"),
+                Internet = SessionSummary.Ping(pings, "internet"),
+                Background = background?.Top(),
             };
             try
             {
@@ -196,6 +232,8 @@ internal sealed class MatchRecorder : IDisposable
             // Timer disposal waits for callbacks; no callback holds stopGate or waits for the UI.
             cpuTimer.DisposeAsync().AsTask().GetAwaiter().GetResult();
             lock (samplingGate) { } // drain an explicitly requested sample too
+            ping?.Dispose();
+            cpuClock?.Dispose();
             try
             {
                 if (smi is { HasExited: false }) { smi.Kill(entireProcessTree: true); smi.WaitForExit(2000); }

@@ -111,7 +111,7 @@ internal static class NetworkCheck
 
             if (props.TryGetValue("RoamAggressiveness", out var roam))
                 checks.Add(roam.Str("DisplayValue").Contains("Lowest", StringComparison.OrdinalIgnoreCase)
-                    ? new("Roaming Aggressiveness", roam.Str("DisplayValue"), Ok)
+                    ? new("Roaming Aggressiveness", roam.Str("DisplayValue"), Ok, null, Fixes.Ref("wifi-roaming"))
                     : new("Roaming Aggressiveness", roam.Str("DisplayValue"), Warn,
                         L("הכרטיס מחפש מדי פעם נקודת גישה טובה יותר, וכל חיפוש כזה יכול לייצר קפיצת פינג. בבית עם נתב אחד אין בזה צורך. אם יש לך Mesh או מגדיל טווח, אל תתקן את זה. התיקון מנתק את ה-Wi-Fi לכמה שניות.",
                           "The card keeps hunting for a better access point, and each hunt can cause a ping spike. With one router at home there's nothing to roam to. Skip this if you use mesh or an extender. Fixing it drops Wi-Fi for a few seconds."),
@@ -129,7 +129,7 @@ internal static class NetworkCheck
         if (ac is not null)
             checks.Add(ac == 0
                 ? new(wifiPower, "Maximum Performance", Ok,
-                    dc is > 0 ? L("על סוללה הכרטיס עובר לחיסכון בחשמל: עוד סיבה לשחק עם מטען.", "On battery the card saves power: one more reason to play plugged in.") : null)
+                    dc is > 0 ? L("על סוללה הכרטיס עובר לחיסכון בחשמל: עוד סיבה לשחק עם מטען.", "On battery the card saves power: one more reason to play plugged in.") : null, Fixes.Ref("wifi-power-ac"))
                 : new(wifiPower, L($"רמה {ac}", $"level {ac}"), Warn,
                     L("כרטיס ה-Wi-Fi נרדם בין חבילות כדי לחסוך חשמל, וזה מוסיף השהיה.", "The Wi-Fi card dozes between packets to save power, which adds latency."), Fixes.Ref("wifi-power-ac")));
 

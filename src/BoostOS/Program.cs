@@ -45,6 +45,19 @@ internal static class Program
             return 0;
         }
 
+        if (args is ["--games-json", var gamesPath, ..])
+        {
+            var games = Game.GameLibrary.List(refresh: true);
+            var running = Game.GameLibrary.Running();
+            File.WriteAllText(gamesPath, JsonSerializer.Serialize(new
+            {
+                games = games.Select(g => new { g.Id, g.Name, g.Store, g.Launch, g.InstallDir, g.Wide, g.Logo, g.Icon, g.Processes }),
+                running = running?.Id,
+                video = RlVideo.Read(hot: false),
+            }, Json));
+            return 0;
+        }
+
         if (args is ["--nvidia-json", var nvPath, ..])
         {
             File.WriteAllText(nvPath, JsonSerializer.Serialize(Nvidia.Dump(), Json));

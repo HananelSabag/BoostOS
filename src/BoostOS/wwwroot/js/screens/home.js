@@ -1,56 +1,45 @@
-// Home: a short rail of tiles (Play, Game Mode, the Diagnostics folder, Settings) and a hub under the focused tile.
+// Home: the favourite game up front, the Games folder (its cards unfold in a row underneath), Diagnostics and
+// Settings. Under them a hub explains the focused tile, next to the readiness gauge.
 
-import { $, $$, esc, icon, gauge, setGauge, setAccent, aimLight, valueHtml, reduceMotion } from '../ui.js';
+import { $, esc, icon, gauge, setGauge, setAccent, aimLight, setBackdrop, valueHtml, reduceMotion, gameArt, artUrl, finite, toast } from '../ui.js';
 import { send } from '../bridge.js';
 import { t } from '../i18n.js';
 import { focusEl } from '../nav.js';
 import { sfx } from '../sound.js';
-import { toast } from '../ui.js';
-
-const TOOLS = [
-  { id: 'scan', icon: 'pulse' },
-  { id: 'net', icon: 'wifi' },
-  { id: 'pad', icon: 'gamepad' },
-  { id: 'mouse', icon: 'mouse' },
-];
+import { openDialog } from '../chrome.js';
 
 let ctx;
 let root;
-let folderOpen = false;
+let shelfOpen = false;
 let hubFor = null;
 
-export default {
+export const favoriteOf = app => app.games.find(g => g.id === app.settings.favoriteGame)
+  ?? app.games.find(g => g.isRocketLeague) ?? app.games[0] ?? null;
+
+const screen = {
   init(c) { ctx = c; },
 
   build(el) {
     root = el;
-    folderOpen = false;
+    shelfOpen = false;
     hubFor = null;
     root.innerHTML = `
       <div class="rail">
-        <button class="tile tile-play" data-nav data-default data-tile="play" style="--i:0">
-          ${icon('ball')}<span class="tile-name">${t('tile.play')}<span class="tile-sub">${t('tile.play.sub')}</span></span>
+        <button class="tile tile-fav" data-nav data-default data-tile="fav" style="--i:0"></button>
+        <button class="tile tile-folder" data-nav data-tile="games" data-sfx="none" aria-expanded="false" aria-controls="shelf" style="--i:1"></button>
+        <button class="tile" data-nav data-tile="diag" style="--i:2">
+          ${icon('pulse')}<span class="tile-name">${t('tile.diag')}<span class="tile-sub" id="diag-sub"></span></span>
         </button>
-        <button class="tile tile-game" data-nav data-tile="game" style="--i:1">
-          <span class="led"></span>${icon('rocket')}<span class="tile-name">${t('tile.game')}<span class="tile-sub" id="game-sub">${t('tile.game.off')}</span></span>
-        </button>
-        <button class="tile tile-folder" data-nav data-tile="diag" data-sfx="none" aria-expanded="false" aria-controls="${TOOLS.map(x => `tool-${x.id}`).join(' ')}" style="--i:2">
-          <span class="folder-glyphs">${TOOLS.map(x => `<span>${icon(x.icon)}</span>`).join('')}</span>
-          <span class="tile-name">${t('tile.diag')}<span class="tile-sub">${t('tile.diag.sub')}</span></span>
-        </button>
-        ${TOOLS.map((x, i) => `
-          <button id="tool-${x.id}" class="tile tile-tool" data-nav data-tile="${x.id}" hidden disabled style="--i:${i}">
-            ${icon(x.icon)}<span class="tile-name">${t(`tool.${x.id}`)}</span>
-          </button>`).join('')}
-        <button class="tile tile-settings" data-nav data-tile="settings" style="--i:3">
+        <button class="tile" data-nav data-tile="settings" style="--i:3">
           ${icon('gear')}<span class="tile-name">${t('tile.settings')}</span>
         </button>
       </div>
+      <div class="shelf" id="shelf" hidden></div>
       <div class="hub">
         <div class="hub-main" id="hub-main"></div>
         <aside class="readiness">
           <div class="fix"><h2 id="fix-heading"></h2><ul class="fix-list" id="fix-list"></ul></div>
-          <div id="home-gauge">${gauge(230, t('gauge.label'))}</div>
+          <div id="home-gauge">${gauge(200, t('gauge.label'))}</div>
         </aside>
       </div>`;
 
@@ -58,161 +47,254 @@ export default {
     root.removeEventListener('focusin', handleFocus);
     root.addEventListener('focusin', handleFocus);
     root.onclick = e => {
-      const tile = e.target.closest('.tile');
-      if (tile) activate(tile.dataset.tile, e.detail === 0);
+      const tile = e.target.closest('[data-tile]');
+      if (tile) activate(tile, e.detail === 0);
     };
     $('#hub-main', root).onanimationend = e => e.currentTarget.classList.remove('swap');
     this.refresh();
   },
 
-  /** Back on Home: close the folder first, like a console. */
+  enter() { setBackdrop(favoriteOf(ctx.app)?.wide); },
+  leave() { setBackdrop(null); },
+
+  /** Back on Home closes the games row first, like a console. */
   back() {
-    if (!folderOpen) return false;
-    closeFolder(true);
+    if (!shelfOpen) return false;
+    closeShelf(true);
     return true;
   },
 
-  focusTile(id) {
-    if (TOOLS.some(x => x.id === id)) {
-      if (!folderOpen) openFolder(false);
-      focusEl($(`.tile[data-tile="${id}"]`, root));
-    } else {
-      focusEl($(`.tile[data-tile="${id === 'game' ? 'game' : id === 'settings' ? 'settings' : 'play'}"]`, root));
-    }
+  /** △ / Y / O on a game: its options. */
+  options() {
+    const id = document.activeElement?.closest?.('[data-game]')?.dataset.game;
+    const game = ctx.app.games.find(g => g.id === id);
+    if (game) gameOptions(game);
   },
 
-  hints: () => folderOpen ? [['select', t('hint.select')], ['back', t('hint.close')], ['full', t('hint.full')]] : [['select', t('hint.select')], ['full', t('hint.full')]],
+  focusTile(id) {
+    focusEl($(`[data-tile="${['diag', 'settings', 'games'].includes(id) ? id : 'fav'}"]`, root));
+  },
 
-  /** Called whenever app data changes (scan, Game Mode, matches). */
+  hints() {
+    const el = document.activeElement;
+    const onGame = !!el?.closest?.('[data-game]');
+    const list = [['select', onGame ? t('hint.play') : el?.dataset?.tile === 'games' ? (shelfOpen ? t('hint.close') : t('hint.open')) : t('hint.select')]];
+    if (onGame) list.push(['options', t('hint.options')]);
+    if (shelfOpen) list.push(['back', t('hint.close')]);
+    list.push(['full', t('hint.full')]);
+    return list;
+  },
+
+  /** Called whenever app data changes (scan, games, Game Mode, matches). */
   refresh() {
     if (!root) return;
-    const { report, scanning, game } = ctx.app;
+    const { report, scanning, games } = ctx.app;
+    renderFavorite();
+    renderFolder();
+    if (shelfOpen) renderShelf();
+
     setGauge($('#home-gauge', root), scanning || !report ? null : report.score, scanning || !report ? t('gauge.scanning') : t('gauge.label'));
+    const issues = report ? issuesOf(report) : [];
+    $('#diag-sub', root).textContent = scanning || !report ? t('hub.scanning') : issues.length ? t('tile.diag.issues', { n: issues.length }) : t('tile.diag.ok');
 
     const heading = $('#fix-heading', root), list = $('#fix-list', root);
     if (scanning || !report) {
       heading.textContent = t('hub.scanning');
       list.innerHTML = '';
     } else {
-      const issues = issuesOf(report);
       heading.textContent = issues.length ? t('hub.fixTitle') : t('hub.allGood');
-      list.innerHTML = issues.slice(0, 4).map(c =>
+      list.innerHTML = issues.slice(0, 3).map(c =>
         `<li class="s-${c.status}"><span class="dot"></span><span><b>${esc(c.title)}</b> ${valueHtml(c.value)}</span></li>`).join('');
     }
-
-    const on = !!game?.active;
-    $('.tile-game .led', root)?.classList.toggle('on', on);
-    const sub = $('#game-sub', root);
-    if (sub) sub.textContent = on ? t('tile.game.on') : t('tile.game.off');
+    if (games.length && document.activeElement?.closest?.('.home') == null && ctx.app.current === 'home') setBackdrop(favoriteOf(ctx.app)?.wide);
     if (hubFor) renderHub(hubFor, true);
   },
 };
 
-const issuesOf = r => r.sections.flatMap(s => s.checks).filter(c => c.status === 'bad' || c.status === 'warn')
+export default screen;
+
+export const issuesOf = r => r.sections.flatMap(s => s.checks).filter(c => c.status === 'bad' || c.status === 'warn')
   .sort((a, b) => (a.status === 'bad' ? 0 : 1) - (b.status === 'bad' ? 0 : 1));
 
-function handleFocus(e) {
-  const tile = e.target.closest('.tile');
-  if (!tile) return;
-  const id = tile.dataset.tile;
-  setAccent(tile.classList.contains('tile-tool') ? 'tool' : id);
-  aimLight(tile);
-  renderHub(id);
+function renderFavorite() {
+  const fav = favoriteOf(ctx.app);
+  const tile = $('.tile-fav', root);
+  const key = fav ? `${fav.id}|${fav.wide}|${ctx.app.running}` : 'none';
+  if (tile.dataset.key === key) return;
+  tile.dataset.key = key;
+  if (fav) tile.dataset.game = fav.id; else delete tile.dataset.game;
+  const running = fav && ctx.app.running === fav.id;
+  tile.innerHTML = `<span class="tile-art">${gameArt(fav)}</span>
+    <span class="tile-name">${esc(fav?.name ?? t('tile.noGames'))}<span class="tile-sub">${running ? t('tile.running') : fav ? `${t('tile.play')} · ${esc(fav.store)}` : t('tile.noGamesSub')}</span></span>
+    <span class="play-badge" aria-hidden="true">${icon('play')}</span>`;
 }
 
-function activate(id, focusFirstTool) {
+function renderFolder() {
+  const { games } = ctx.app;
+  const tile = $('.tile-folder', root);
+  const covers = games.filter(g => g.wide).slice(0, 3);
+  const key = `${covers.map(g => g.id).join()}|${games.length}|${shelfOpen}`;
+  if (tile.dataset.key === key) return;
+  tile.dataset.key = key;
+  tile.classList.toggle('open', shelfOpen);
+  tile.setAttribute('aria-expanded', String(shelfOpen));
+  tile.innerHTML = `<span class="folder-stack">${covers.length
+      ? covers.map((g, i) => `<span style="--k:${i}"><img src="${artUrl(g.wide)}" alt="" loading="lazy"></span>`).join('')
+      : `<span class="folder-empty">${icon('grid')}</span>`}</span>
+    <span class="tile-name">${t('tile.games')}<span class="tile-sub">${games.length ? t('tile.games.sub', { n: games.length }) : t('tile.games.none')}</span></span>`;
+}
+
+function renderShelf() {
+  const shelf = $('#shelf', root);
+  const { games, settings } = ctx.app;
+  const fav = favoriteOf(ctx.app);
+  // Redraw only when something changed, and keep the focus on the same game when it does.
+  const key = `${games.map(g => `${g.id}:${g.wide}`).join()}|${fav?.id}|${ctx.app.running}`;
+  if (shelf.dataset.key === key) return;
+  shelf.dataset.key = key;
+  const focused = document.activeElement?.closest?.('.game-card')?.dataset.game;
+  shelf.innerHTML = games.length ? games.map((g, i) => `
+    <button class="game-card" data-nav data-tile="game" data-game="${esc(g.id)}" style="--i:${i}" aria-label="${esc(g.name)}">
+      <span class="card-art">${gameArt(g)}</span>
+      ${g.id === fav?.id ? `<span class="fav-badge" title="${esc(t('games.favorite'))}">${icon('star')}</span>` : ''}
+      ${ctx.app.running === g.id ? `<span class="run-badge">${t('tile.running')}</span>` : ''}
+    </button>`).join('')
+    : `<p class="shelf-empty">${t('games.empty')}</p>`;
+  shelf.dataset.fav = settings.favoriteGame ?? '';
+  if (focused) $(`.game-card[data-game="${CSS.escape(focused)}"]`, shelf)?.focus({ preventScroll: true });
+}
+
+function handleFocus(e) {
+  const tile = e.target.closest('[data-tile]');
+  if (!tile) return;
+  const id = tile.dataset.tile;
+  const gameId = tile.dataset.game;
+  setAccent(id === 'fav' || id === 'game' || id === 'games' ? 'play' : id);
+  if (id !== 'game') aimLight(tile);
+  const game = ctx.app.games.find(g => g.id === gameId);
+  setBackdrop((game ?? favoriteOf(ctx.app))?.wide);
+  renderHub(id === 'game' ? `game:${gameId}` : id);
+  ctx.renderHints();
+}
+
+function activate(tile, viaPad) {
+  const id = tile.dataset.tile;
   // Collapsing on focus moves the target between pointer-down and click, cancelling mouse activation.
-  if (folderOpen && id !== 'diag' && !TOOLS.some(x => x.id === id)) closeFolder(false);
+  if (shelfOpen && id !== 'games' && id !== 'game') closeShelf(false);
   switch (id) {
-    case 'play':
-      send('play');
-      toast(t('game.launching'));
+    case 'fav': case 'game':
+      play(tile.dataset.game);
       break;
-    case 'diag':
-      if (folderOpen) closeFolder(true); else openFolder(focusFirstTool);
+    case 'games':
+      if (shelfOpen) closeShelf(true); else openShelf(viaPad);
       break;
-    case 'game': case 'settings': case 'scan': case 'net': case 'pad': case 'mouse':
+    case 'diag': case 'settings':
       ctx.show(id);
       break;
   }
 }
 
-function openFolder(focusFirstTool) {
-  if (folderOpen) return;
-  folderOpen = true;
-  const folder = $('.tile-folder', root);
-  folder.classList.add('open');
-  folder.parentElement.classList.add('folder-open');
-  folder.setAttribute('aria-expanded', 'true');
-  $$('.tile-tool', root).forEach(x => { x.hidden = false; x.disabled = false; x.classList.add('unfold'); });
-  sfx.open();
-  ctx.renderHints();
-  if (focusFirstTool) focusEl($('.tile-tool', root));
+function play(id) {
+  const game = ctx.app.games.find(g => g.id === id);
+  send('play', id ? { id } : {});
+  toast(ctx.app.settings.gameModeOnPlay ? t('game.launching', { name: game?.name ?? t('tile.play') }) : t('game.launchingPlain', { name: game?.name ?? '' }));
 }
 
-function closeFolder(refocus) {
-  if (!folderOpen) return;
-  folderOpen = false;
-  const folder = $('.tile-folder', root);
-  folder.classList.remove('open');
-  folder.parentElement.classList.remove('folder-open');
-  folder.setAttribute('aria-expanded', 'false');
-  const tools = $$('.tile-tool', root);
-  if (refocus) focusEl(folder);
+async function gameOptions(game) {
+  const isFav = favoriteOf(ctx.app)?.id === game.id;
+  const actions = [
+    { id: 'play', label: t('games.play'), icon: 'play', primary: true },
+    { id: 'launch', label: ctx.app.settings.gameModeOnPlay ? t('games.playPlain') : t('games.playGm'), icon: 'rocket' },
+  ];
+  if (!isFav) actions.push({ id: 'fav', label: t('games.makeFavorite'), icon: 'star' });
+  if (game.isRocketLeague) actions.push({ id: 'video', label: t('games.video'), icon: 'sliders' });
+  const choice = await openDialog({ title: game.name, text: `${game.store}`, actions, focus: 'play' });
+  if (choice === 'play') play(game.id);
+  else if (choice === 'launch') {
+    // The opposite of the Settings default, for this one start.
+    send(ctx.app.settings.gameModeOnPlay ? 'launch' : 'play', { id: game.id });
+    toast(t('game.launchingPlain', { name: game.name }));
+  } else if (choice === 'fav') {
+    ctx.saveSettings({ ...ctx.app.settings, favoriteGame: game.id });
+    sfx.on();
+    toast(t('games.favoriteSet', { name: game.name }));
+  } else if (choice === 'video') ctx.show('rlvideo', { from: 'home' });
+}
+
+function openShelf(focusFirstCard) {
+  if (shelfOpen) return;
+  shelfOpen = true;
+  send('games');
+  const shelf = $('#shelf', root);
+  renderShelf();
+  renderFolder();
+  shelf.hidden = false;
+  root.classList.add('shelf-open');
+  if (!reduceMotion) { shelf.classList.remove('unfold'); void shelf.offsetWidth; shelf.classList.add('unfold'); }
+  sfx.open();
+  ctx.renderHints();
+  if (focusFirstCard) focusEl($('.game-card', shelf));
+}
+
+function closeShelf(refocus) {
+  if (!shelfOpen) return;
+  shelfOpen = false;
+  const shelf = $('#shelf', root);
+  shelf.hidden = true;
+  shelf.classList.remove('unfold');
+  root.classList.remove('shelf-open');
+  renderFolder();
+  if (refocus) focusEl($('.tile-folder', root));
   sfx.close();
   ctx.renderHints();
-  // Hide synchronously so a rapid reopen cannot focus a disabled, outgoing copy of a tool.
-  tools.forEach(x => { x.hidden = true; x.disabled = true; x.classList.remove('unfold'); });
 }
 
 /** The hub under the rail: what the focused tile does, plus the facts that matter for it. */
 function renderHub(id, quiet = false) {
   const main = $('#hub-main', root);
   if (!main) return;
-  const { report, game, matches } = ctx.app;
+  const { report, matches, games } = ctx.app;
   const facts = [];
   let title = '', text = '';
 
-  if (id === 'play') {
-    title = t('tile.play');
-    const store = report?.sections.find(s => s.id === 'rocketleague')?.checks[0]?.value?.split(' · ')[0] ?? 'Epic Games';
-    text = t('hub.play', { store });
-    const m = matches?.[0];
+  if (id === 'fav' || id.startsWith('game:')) {
+    const game = id === 'fav' ? favoriteOf(ctx.app) : games.find(g => `game:${g.id}` === id);
+    title = game?.name ?? t('tile.noGames');
+    text = !game ? t('hub.noGames')
+      : ctx.app.settings.gameModeOnPlay ? t('hub.play', { store: game.store }) : t('hub.playPlain', { store: game.store });
+    const m = matches.find(x => x.gameId ? x.gameId === game?.id : game?.isRocketLeague);
     if (m) {
-      facts.push([Math.round(m.minutes), `${t('hub.lastMatch')} · ${t('hub.minutes')}`]);
-      if (m.gpuTempMax != null) facts.push([`${Math.round(m.gpuTempMax)}°`, t('hub.gpuMax')]);
-      facts.push([t(`bottleneck.${m.bottleneck}`), t('hub.limit')]);
+      facts.push([Math.round(m.minutes), t('hub.lastMinutes')]);
+      if (finite(m.gpuTempMax)) facts.push([`${Math.round(m.gpuTempMax)}°`, t('hub.gpuMax')]);
+      if (m.router && finite(m.router.medianMs)) facts.push([`${Math.round(m.router.medianMs)} ms`, t('hub.wifiPing')]);
     }
-  } else if (id === 'game') {
-    title = t('tile.game');
-    text = t('hub.game');
-    facts.push([game?.active ? t('game.on') : t('game.off'), t('tile.game')]);
-    const close = game?.plan?.find(p => p.willRun)?.detail?.split('.')[0];
-    if (close && !game?.active) facts.push([close, t('hub.willClose')]);
+    if (game && favoriteOf(ctx.app)?.id === game.id && id !== 'fav') facts.push(['★', t('games.favorite')]);
+  } else if (id === 'games') {
+    title = t('tile.games');
+    text = games.length ? t('hub.games', { n: games.length }) : t('games.empty');
+    const stores = [...new Set(games.map(g => g.store))];
+    if (stores.length) facts.push([stores.join(' · '), t('hub.stores')]);
   } else if (id === 'diag') {
     title = t('tile.diag');
     text = t('hub.diag');
     if (report) {
       const issues = issuesOf(report);
       facts.push([report.score, t('gauge.label')]);
-      const fixable = issues.filter(c => c.fix).length;
-      if (fixable) facts.push([fixable, t('hub.fixable', { n: fixable })]);
+      facts.push([issues.length, t('hub.issues')]);
+      if (matches.length) facts.push([matches.length, t('hub.sessions')]);
     }
   } else if (id === 'settings') {
     title = t('tile.settings');
     text = t('hub.settings');
     facts.push([ctx.app.settings.language === 'en' ? 'English' : 'עברית', t('hub.lang')]);
-  } else {
-    title = t(`tool.${id}`);
-    text = t(`hub.${id}`);
   }
 
   main.innerHTML = `
     <h1>${esc(title)}</h1>
     <p class="hub-text">${esc(text)}</p>
     ${facts.length ? `<div class="hub-facts">${facts.map(([b, s]) => `<div><b><bdi>${esc(b)}</bdi></b><span>${esc(s)}</span></div>`).join('')}</div>` : ''}`;
-  if (!quiet && hubFor !== id && !reduceMotion) {
-    main.classList.add('swap');
-  }
+  if (!quiet && hubFor !== id && !reduceMotion) main.classList.add('swap');
   hubFor = id;
 }
+
+export { gameOptions };

@@ -94,7 +94,7 @@ internal static partial class RocketLeague
         var gpuTitle = L("כרטיס שהמשחק משתמש בו", "GPU the game uses");
         if (facts.HasTwoGpus)
             checks.Add(prefs.GetValueOrDefault("GpuPreference") == "2"
-                ? new(gpuTitle, "NVIDIA (High performance)", Ok)
+                ? new(gpuTitle, "NVIDIA (High performance)", Ok, null, Fixes.Ref("rl-gpu-pref"))
                 : new(gpuTitle, L("לא מוגדר", "Not set"), Warn,
                     L("בלפטופ עם שני כרטיסים, משחק יכול בטעות לרוץ על הכרטיס החלש.", "On a laptop with two GPUs a game can end up on the weak one."), Fixes.Ref("rl-gpu-pref")));
 
@@ -136,7 +136,7 @@ internal static partial class RocketLeague
                 L("VSync מוסיף השהיה מורגשת. ברוקט ליג כמעט כולם מכבים אותו, ובמסך G-Sync/FreeSync הוא לא נחוץ. צריך שהמשחק יהיה סגור בזמן התיקון.",
                   "VSync adds noticeable latency. Almost everyone turns it off in Rocket League, and a G-Sync/FreeSync display doesn't need it. The game must be closed for the fix."),
                 Fixes.Ref("rl-vsync"))
-            : new("VSync", L("כבוי", "Off"), Ok));
+            : new("VSync", L("כבוי", "Off"), Ok, null, Fixes.Ref("rl-vsync")));
 
         checks.Add(new(L("הגבלת FPS", "Frame cap"), Flag("UncappedFramerate") ? L("ללא הגבלה", "Uncapped") : L("מוגבל (לפי מה שבחרת במשחק)", "Capped (as set in game)"), Info,
             L("FPS יציב עדיף על FPS גבוה שקופץ. דוח המשחק מראה אם המעבד או הכרטיס הם שמגבילים.", "Steady FPS beats high FPS that jumps around. The match report shows whether the CPU or the GPU holds you back.")));

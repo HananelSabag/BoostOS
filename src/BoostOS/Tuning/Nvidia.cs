@@ -101,7 +101,44 @@ internal static class Nvidia
         using var s = DrsSession.Open();
         if (s is null) return new { driver = false };
         var (profile, name) = s.FindGameProfile(create: false);
-        return new { driver = true, profile = name, found = profile != IntPtr.Zero, settings = profile == IntPtr.Zero ? [] : Recommended.Select(r => s.Raw(profile, r.Id)).ToArray() };
+        var global = s.GlobalProfile();
+        return new
+        {
+            driver = true, profile = name, found = profile != IntPtr.Zero,
+            settings = profile == IntPtr.Zero ? [] : Recommended.Select(r => s.Raw(profile, r.Id)).ToArray(),
+            global = global == IntPtr.Zero ? null : s.Raw(global, PowerManagementId),
+        };
+    }
+
+    /// <summary>Power management mode of the global profile: what every app without its own profile gets, the desktop included.</summary>
+    public static SettingValue? ReadGlobalPower()
+    {
+        using var s = DrsSession.Open();
+        if (s is null) return null;
+        var global = s.GlobalProfile();
+        return global == IntPtr.Zero ? null : s.Get(global, PowerManagementId) ?? Default(PowerManagementId);
+    }
+
+    /// <summary>Puts the global power management mode back to the driver default and returns the old value, for undo.</summary>
+    public static SettingValue ResetGlobalPower()
+    {
+        using var s = DrsSession.Open() ?? throw new NvapiException("NVIDIA driver not found");
+        var global = s.GlobalProfile();
+        if (global == IntPtr.Zero) throw new NvapiException("NVIDIA global profile not found");
+        var before = s.Get(global, PowerManagementId) ?? Default(PowerManagementId);
+        s.RestoreDefault(global, PowerManagementId);
+        s.Save();
+        return before;
+    }
+
+    public static void SetGlobalPower(SettingValue before)
+    {
+        using var s = DrsSession.Open() ?? throw new NvapiException("NVIDIA driver not found");
+        var global = s.GlobalProfile();
+        if (global == IntPtr.Zero) return;
+        if (before.UserSet) s.Set(global, PowerManagementId, before.Value);
+        else s.RestoreDefault(global, PowerManagementId);
+        s.Save();
     }
 
     public static bool IsRecommended(Snapshot snap) =>
@@ -121,6 +158,7 @@ internal static class Nvidia
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int ProfileSettingFn(IntPtr session, IntPtr profile, uint settingId);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int CreateProfileFn(IntPtr session, IntPtr profileInfo, out IntPtr profile);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int CreateAppFn(IntPtr session, IntPtr profile, IntPtr application);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int GetProfileFn(IntPtr session, out IntPtr profile);
 
     private static T Fn<T>(uint id) where T : Delegate
     {
@@ -331,6 +369,13 @@ internal static class Nvidia
         }
 
         public void Save() => Check(Fn<SessionFn>(0xFCBC7E14)(handle), "DRS_SaveSettings");
+
+        /// <summary>NvAPI_DRS_GetCurrentGlobalProfile; zero when the driver has none.</summary>
+        public IntPtr GlobalProfile()
+        {
+            try { return Fn<GetProfileFn>(0x617BFF9F)(handle, out var p) == Ok ? p : IntPtr.Zero; }
+            catch (NvapiException) { return IntPtr.Zero; }
+        }
 
         public void Dispose() => Fn<SessionFn>(0xDAD9CFF8)(handle);
 

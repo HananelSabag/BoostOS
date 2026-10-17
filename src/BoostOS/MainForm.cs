@@ -75,7 +75,9 @@ internal sealed class MainForm : Form
     {
         // UI sounds play from controller input too, which a browser wouldn't count as a user gesture.
         var options = new CoreWebView2EnvironmentOptions("--autoplay-policy=no-user-gesture-required");
-        var env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(AppSettings.DataDir, "WebView2"), options);
+        // BOOSTOS_WEBVIEW_DIR lets a development copy run next to an installed one (WebView2 locks its data folder).
+        var webData = Environment.GetEnvironmentVariable("BOOSTOS_WEBVIEW_DIR") is { Length: > 0 } dir ? dir : Path.Combine(AppSettings.DataDir, "WebView2");
+        var env = await CoreWebView2Environment.CreateAsync(null, webData, options);
         await web.EnsureCoreWebView2Async(env);
 
         var core = web.CoreWebView2;
@@ -88,12 +90,15 @@ internal sealed class MainForm : Form
         core.Settings.AreDevToolsEnabled = false;
 #endif
         core.SetVirtualHostNameToFolderMapping(Host, Path.Combine(AppContext.BaseDirectory, "wwwroot"), CoreWebView2HostResourceAccessKind.Deny);
+        // Game pictures copied from the launchers' own caches. Images only: no script can read them cross-origin.
+        Directory.CreateDirectory(GameLibrary.ArtDir);
+        core.SetVirtualHostNameToFolderMapping(GameLibrary.ArtHost, GameLibrary.ArtDir, CoreWebView2HostResourceAccessKind.DenyCors);
         core.WebMessageReceived += OnMessage;
 
         // A previous run may have ended before it could restore. Never undo a session still in progress.
         try
         {
-            await ChangeSystemAsync(() => !RocketLeague.IsRunning() && GameMode.IsActive
+            await ChangeSystemAsync(() => !RocketLeague.IsRunning() && GameLibrary.Running() is null && GameMode.IsActive
                 ? GameMode.Restore(periodicWifiSpikes) : null);
         }
         catch (Exception ex) { startupRecoveryError = ex.Message; }
@@ -151,12 +156,42 @@ internal sealed class MainForm : Form
             switch (cmd)
             {
                 case "hello":
-                    Post("hello", new { settings, version = Application.ProductVersion.Split('+')[0], matches = MatchStore.Load().Take(5), gameMode = GameMode.Status(periodicWifiSpikes), fixesApplied = Fixes.Applied().Count });
+                    Post("hello", new { settings, version = Application.ProductVersion.Split('+')[0], matches = MatchStore.Load(), gameMode = GameMode.Status(periodicWifiSpikes), fixesApplied = Fixes.Applied().Count });
                     if (startupRecoveryError is { } recoveryError)
                     {
                         startupRecoveryError = null;
                         Post("error", new { cmd = "gameModeRecovery", message = recoveryError });
                     }
+                    Post("games", await Task.Run(() => GameLibrary.List(refresh: true)));
+                    break;
+
+                case "games":
+                    Post("games", await Task.Run(() => GameLibrary.List(refresh: true)));
+                    break;
+
+                case "fixesApplied":
+                    Post("fixesApplied", Fixes.Applied());
+                    break;
+
+                case "rlVideo":
+                    Post("rlVideo", await Task.Run(() => RlVideo.Read(LastSessionHot())));
+                    break;
+
+                case "rlVideoSet":
+                case "rlVideoUndo":
+                    var changes = cmd == "rlVideoSet"
+                        ? JsonSerializer.Deserialize<Dictionary<string, string>>(msg.GetProperty("changes").GetRawText()) ?? []
+                        : [];
+                    Post("rlVideo", await ChangeSystemAsync(() =>
+                    {
+                        if (cmd == "rlVideoSet") RlVideo.Apply(changes); else RlVideo.Undo();
+                        return RlVideo.Read(LastSessionHot());
+                    }));
+                    Post("rlVideoSaved", new { undo = cmd == "rlVideoUndo" });
+                    break;
+
+                case "minimize":
+                    WindowState = FormWindowState.Minimized;
                     break;
 
                 case "saveSettings":
@@ -224,13 +259,11 @@ internal sealed class MainForm : Form
 
                 case "play":
                     // Console flow: get the PC ready, then start the game. Restores by itself when the game closes.
-                    await PlayAsync();
+                    await PlayAsync(GameFor(msg), withGameMode: settings.GameModeOnPlay);
                     break;
 
-                case "launchRocketLeague":
-                    await systemChanges.WaitAsync();
-                    try { ReportLaunch(LaunchRocketLeague()); }
-                    finally { systemChanges.Release(); }
+                case "launch":
+                    await PlayAsync(GameFor(msg), withGameMode: false);
                     break;
 
                 case "matches":
@@ -259,7 +292,19 @@ internal sealed class MainForm : Form
         finally { systemChanges.Release(); }
     }
 
-    private async Task PlayAsync()
+    /// <summary>The game a message names, else the favourite, else Rocket League, else the first game found.</summary>
+    private GameInfo? GameFor(JsonElement msg)
+    {
+        var id = msg.TryGetProperty("id", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        var games = GameLibrary.List();
+        return GameLibrary.Find(id) ?? GameLibrary.Find(settings.FavoriteGame)
+            ?? games.FirstOrDefault(g => g.IsRocketLeague) ?? games.FirstOrDefault();
+    }
+
+    private bool LastSessionHot() =>
+        MatchStore.Load().FirstOrDefault() is { } m && (m.GpuThermalLimitedPct is >= 20 || m.GpuTempMax is >= 86);
+
+    private async Task PlayAsync(GameInfo? game, bool withGameMode)
     {
         await systemChanges.WaitAsync();
         try
@@ -268,29 +313,24 @@ internal sealed class MainForm : Form
             var launched = false;
             try
             {
-                Post("gameMode", await Task.Run(() => GameMode.Apply(periodicWifiSpikes)));
-                launched = LaunchRocketLeague();
-                ReportLaunch(launched);
+                if (withGameMode) Post("gameMode", await Task.Run(() => GameMode.Apply(periodicWifiSpikes, game?.Store)));
+                launched = game is not null && Launch(game.Launch);
+                Post("launch", new { ok = launched, name = game?.Name });
+                if (launched) WindowState = FormWindowState.Minimized; // out of the game's way; the page suspends itself
             }
             finally
             {
                 // A failed launch must not strand changes made for this attempt, or undo a manual session.
-                if (!launched && !wasActive && GameMode.IsActive && !RocketLeague.IsRunning())
+                if (!launched && !wasActive && GameMode.IsActive && GameLibrary.Running() is null)
                     Post("gameMode", await Task.Run(() => GameMode.Restore(periodicWifiSpikes)));
             }
         }
         finally { systemChanges.Release(); }
     }
 
-    private void ReportLaunch(bool launched)
-    {
-        Post("launch", new { ok = launched });
-        if (launched) WindowState = FormWindowState.Minimized; // out of the game's way; the page suspends itself
-    }
-
     /// <summary>
-    /// Every 4 seconds: is Rocket League running? (A process-list snapshot only, never a handle to the game.)
-    /// Start recording when a match starts; when it ends, save the report, undo Game Mode and come back.
+    /// Every 4 seconds: is one of the library's games running? (The kernel's process snapshot only, never a handle
+    /// to the game.) Start recording when a game starts; when it ends, save the report, undo Game Mode and come back.
     /// </summary>
     private async void WatchGame()
     {
@@ -309,14 +349,15 @@ internal sealed class MainForm : Form
     private async Task WatchGameAsync()
     {
         if (IsDisposed || Disposing) return;
-        if (RocketLeague.IsRunning())
+        if (await Task.Run(() => GameLibrary.Running()) is { } running)
         {
-            sawGame = true;
-            if (recorder is null && settings.TrackMatches) recorder = new MatchRecorder(GameMode.IsActive);
+            if (watched?.Id != running.Id) Post("gameRunning", new { id = running.Id, name = running.Name });
+            watched = running;
+            if (recorder is null && settings.TrackMatches) recorder = new MatchRecorder(GameMode.IsActive, running);
             return;
         }
-        if (!sawGame) return;
-        sawGame = false;
+        if (watched is null) return;
+        watched = null;
 
         MatchReport? report = null;
         var reportSaved = false;
@@ -342,8 +383,9 @@ internal sealed class MainForm : Form
         Exception? restoreError = null;
         // Recording or storing a report must never prevent recovery. Recheck after awaiting the recorder:
         // the user may already have started another game outside BoostOS.
-        var gameClosed = !RocketLeague.IsRunning();
-        sawGame = !gameClosed;
+        var stillRunning = await Task.Run(() => GameLibrary.Running());
+        var gameClosed = stillRunning is null;
+        watched = stillRunning;
         if (gameClosed && GameMode.IsActive)
         {
             try { status = await Task.Run(() => GameMode.Restore(periodicWifiSpikes)); }
@@ -366,7 +408,7 @@ internal sealed class MainForm : Form
         if (restoreError is not null) ReportError("gameModeRecovery", restoreError);
     }
 
-    private bool sawGame;
+    private GameInfo? watched;
 
     private void ReportError(string cmd, Exception error)
     {
@@ -389,16 +431,13 @@ internal sealed class MainForm : Form
     }
 
     /// <summary>
-    /// Starts the game through its own store launcher, which also starts Easy Anti-Cheat.
-    /// We never start RocketLeague.exe directly.
+    /// Starts a game through its own store launcher (Epic or Steam), which also starts its anti-cheat.
+    /// We never start a game's executable directly.
     /// </summary>
-    private static bool LaunchRocketLeague()
+    private static bool Launch(string uri)
     {
-        var install = RocketLeague.Find();
-        if (install is null) return false;
-        var uri = install.Store == "Steam"
-            ? "steam://rungameid/252950"
-            : $"com.epicgames.launcher://apps/{install.EpicAppName ?? "Sugar"}?action=launch&silent=true";
+        if (!uri.StartsWith("steam://rungameid/", StringComparison.Ordinal)
+            && !uri.StartsWith("com.epicgames.launcher://apps/", StringComparison.Ordinal)) return false;
         try
         {
             Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true })?.Dispose();

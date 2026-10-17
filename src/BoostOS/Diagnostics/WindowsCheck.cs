@@ -17,7 +17,7 @@ internal static class WindowsCheck
             ? new("Game Mode", L("כבוי", "Off"), Warn,
                 L("Game Mode נותן למשחק עדיפות על המעבד ומונע התקנת עדכונים באמצע משחק.", "Game Mode gives the game CPU priority and stops updates from installing mid-match."),
                 Fixes.Ref("windows-game-mode"))
-            : new("Game Mode", L("פעיל", "On"), Ok));
+            : new("Game Mode", L("פעיל", "On"), Ok, null, Fixes.Ref("windows-game-mode")));
 
         var history = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\GameDVR", "HistoricalCaptureEnabled", null);
         var recTitle = L("הקלטה ברקע (Game Bar)", "Background recording (Game Bar)");
@@ -26,13 +26,13 @@ internal static class WindowsCheck
                 L("ווינדוס מקליט כל הזמן את הדקות האחרונות כדי שתוכל לשמור קליפ, וזה עולה בביצועים. אם אתה מקליט קליפים עם NVIDIA או OBS, אין בזה צורך.",
                   "Windows keeps recording the last minutes so you can save a clip, which costs performance. If you clip with NVIDIA or OBS, you don't need it."),
                 Fixes.Ref("game-dvr-history"))
-            : new(recTitle, L("כבויה", "Off"), Ok));
+            : new(recTitle, L("כבויה", "Off"), Ok, null, Fixes.Ref("game-dvr-history")));
 
         var global = ParseFlags(Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\DirectX\UserGpuPreferences", "DirectXUserGlobalSettings", null) as string);
         const string windowed = "Optimizations for windowed games";
         checks.Add(global.GetValueOrDefault("SwapEffectUpgradeEnable") switch
         {
-            "1" => new(windowed, L("פעיל", "On"), Ok, L("משחק במצב Borderless מקבל כמעט את אותה השהיה כמו Fullscreen אמיתי.", "Borderless games get nearly the same latency as true fullscreen.")),
+            "1" => new(windowed, L("פעיל", "On"), Ok, L("משחק במצב Borderless מקבל כמעט את אותה השהיה כמו Fullscreen אמיתי.", "Borderless games get nearly the same latency as true fullscreen."), Fixes.Ref("windowed-opt")),
             "0" => new(windowed, L("כבוי", "Off"), Warn,
                 L("בלי זה, משחק במצב Borderless מקבל יותר השהיה.", "Without it, borderless games get more latency."), Fixes.Ref("windowed-opt")),
             _ => new(windowed, L("ברירת מחדל", "Default"), Info),

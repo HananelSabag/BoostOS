@@ -29,7 +29,7 @@ internal static class GameMode
     [
         new("OneDrive", ["OneDrive"], "/shutdown", null), // the user unlinked OneDrive and doesn't want it back after a match
         new("Steam", ["steam"], "-shutdown", "-silent"),
-        new("Phone Link", ["PhoneExperienceHost", "CrossDeviceService"], null, null),
+        new("Phone Link", ["PhoneExperienceHost", "CrossDeviceService", "CrossDeviceResume"], null, null),
         new("Widgets", ["Widgets"], null, null), // WidgetService is respawned by Windows at once, so leave it
         new("Teams", ["ms-teams"], null, null),
         new("Copilot", ["Copilot"], null, null),
@@ -56,7 +56,7 @@ internal static class GameMode
     }
 
     /// <param name="periodicWifiSpikes">From the last network test: true = spikes on a fixed beat were found, null = no test yet.</param>
-    public static GameModeStatus Status(bool? periodicWifiSpikes)
+    public static GameModeStatus Status(bool? periodicWifiSpikes, string? store = null)
     {
         lock (StateGate)
         {
@@ -67,15 +67,15 @@ internal static class GameMode
                 steps = [new(L("שחזור מצב משחק", "Game Mode recovery"),
                     L("קובץ השחזור לא קריא. הוא נשמר ולא יוחלף, כדי לא לאבד את ההגדרות המקוריות.",
                       "The recovery file cannot be read. It has been kept to preserve the original settings."), "failed")];
-            return new GameModeStatus(active, snap?.Since, BuildPlan(periodicWifiSpikes), steps);
+            return new GameModeStatus(active, snap?.Since, BuildPlan(periodicWifiSpikes, store), steps);
         }
     }
 
-    private static List<PlanItem> BuildPlan(bool? periodicWifiSpikes)
+    private static List<PlanItem> BuildPlan(bool? periodicWifiSpikes, string? store)
     {
         var plan = new List<PlanItem>();
 
-        var running = RunningRules().Select(r => r.Label).ToList();
+        var running = RunningRules(store).Select(r => r.Label).ToList();
         plan.Add(running.Count > 0
             ? new(L("סגירת תוכנות רקע", "Close background apps"),
                 L($"{string.Join(", ", running)}. הן מסנכרנות, מעדכנות ושולחות התראות באמצע משחק.",
@@ -100,24 +100,25 @@ internal static class GameMode
         });
 
         plan.Add(new(L("אחרי המשחק", "After the match"),
-            L("כשרוקט ליג נסגר הכל חוזר לבד: Steam נפתח שוב ומצב החשמל חוזר. OneDrive נשאר סגור.",
-              "When Rocket League closes, everything goes back by itself: Steam reopens and the power mode is restored. OneDrive stays closed."), true));
+            L("כשהמשחק נסגר הכל חוזר לבד: Steam נפתח שוב ומצב החשמל חוזר. OneDrive נשאר סגור.",
+              "When the game closes, everything goes back by itself: Steam reopens and the power mode is restored. OneDrive stays closed."), true));
         return plan;
     }
 
-    public static GameModeStatus Apply(bool? periodicWifiSpikes)
+    /// <param name="store">The store of the game about to start: its launcher must stay open.</param>
+    public static GameModeStatus Apply(bool? periodicWifiSpikes, string? store = null)
     {
-        lock (StateGate) return ApplyCore(periodicWifiSpikes);
+        lock (StateGate) return ApplyCore(periodicWifiSpikes, store);
     }
 
-    private static GameModeStatus ApplyCore(bool? periodicWifiSpikes)
+    private static GameModeStatus ApplyCore(bool? periodicWifiSpikes, string? store)
     {
-        if (IsActive) return Status(periodicWifiSpikes);
+        if (IsActive) return Status(periodicWifiSpikes, store);
 
         var snap = new Snapshot { Since = DateTime.Now };
         Save(snap); // first, so a crash half-way can still be restored
 
-        foreach (var rule in RunningRules())
+        foreach (var rule in RunningRules(store))
         {
             try
             {
@@ -219,11 +220,12 @@ internal static class GameMode
         return snap.Overlay is not null || snap.WifiScanStoppedOn is not null || snap.Relaunch.Count > 0;
     }
 
-    public static List<string> RunningLabels() => RunningRules().Select(r => r.Label).ToList();
+    public static List<string> RunningLabels() => RunningRules(null).Select(r => r.Label).ToList();
 
-    private static IEnumerable<AppRule> RunningRules()
+    private static IEnumerable<AppRule> RunningRules(string? store)
     {
-        var rlOnSteam = RocketLeague.Find()?.Store == "Steam";
+        // Never close the launcher of the game that is about to run.
+        var rlOnSteam = store == "Steam" || store is null && RocketLeague.Find()?.Store == "Steam";
         foreach (var rule in Rules)
         {
             if (rlOnSteam && rule.Label == "Steam") continue;

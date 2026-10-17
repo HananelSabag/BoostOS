@@ -45,7 +45,7 @@ internal static class PowerCheck
             {
                 var overlay = Overlay();
                 if (overlay == OverlayBestPerformance)
-                    checks.Add(new(plan, $"{name} · Best performance", Ok));
+                    checks.Add(new(plan, $"{name} · Best performance", Ok, null, Tuning.Fixes.Ref("power-overlay")));
                 else
                     checks.Add(new(plan, $"{name} · {(overlay == OverlayBestEfficiency ? "Best power efficiency" : L("מצב רגיל", "normal mode"))}",
                         overlay == OverlayBestEfficiency ? Bad : Warn,

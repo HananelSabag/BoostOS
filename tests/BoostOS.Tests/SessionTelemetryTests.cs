@@ -253,7 +253,7 @@ public class SessionTelemetryTests
         var report = MatchRecorder.Summarize(Start.LocalDateTime, Start.AddMinutes(1).LocalDateTime, true,
             [Sample(20, 0x24), Sample(22, 0)]) with { TelemetryFile = "session-example.json" };
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(report, BoostOS.Program.Json));
-        Assert.Equal(2, json.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(3, json.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(50d, json.RootElement.GetProperty("gpuThermalLimitedPct").GetDouble());
         Assert.Equal(50d, json.RootElement.GetProperty("gpuPowerLimitedPct").GetDouble());
         Assert.Equal(2, json.RootElement.GetProperty("clockReasonSamples").GetInt32());

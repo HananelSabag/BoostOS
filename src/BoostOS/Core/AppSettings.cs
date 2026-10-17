@@ -10,6 +10,10 @@ public sealed record AppSettings
     public bool Rumble { get; init; } = true;
     public bool StartFullscreen { get; init; } = true;
     public bool TrackMatches { get; init; } = true;
+    /// <summary>Game Mode turns on by itself when a game is started from BoostOS.</summary>
+    public bool GameModeOnPlay { get; init; } = true;
+    /// <summary>The game on the big first tile ("epic:Sugar", "steam:730"…). Null: Rocket League, or the first game.</summary>
+    public string? FavoriteGame { get; init; }
 
     public static string DataDir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BoostOS");

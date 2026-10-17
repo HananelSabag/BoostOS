@@ -9,7 +9,7 @@ namespace BoostOS.Diagnostics;
 internal static class GpuCheck
 {
     private const string Fields = "name,driver_version,memory.total,pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current,pcie.link.width.max," +
-                                  "temperature.gpu,power.draw,enforced.power.limit,power.max_limit,clocks.max.graphics";
+                                  "temperature.gpu,power.draw,enforced.power.limit,power.max_limit,clocks.max.graphics,pstate,utilization.gpu";
 
     public static Section Run(Facts facts)
     {
@@ -38,6 +38,7 @@ internal static class GpuCheck
         if (N(2) is { } vram) checks.Add(new(L("זיכרון גרפי", "Video memory"), $"{vram / 1024:0.#} GB", Info));
 
         AddProfileCheck(checks);
+        AddRestingCheck(checks, F(12), N(13), N(8), N(7));
 
         if (N(5) is { } width && N(6) is { } maxWidth)
             checks.Add(width >= maxWidth
@@ -86,11 +87,39 @@ internal static class GpuCheck
             (x.Id == Nvidia.PowerManagementId ? L("ניהול חשמל: ", "Power: ") : L("השהיה נמוכה: ", "Low latency: ")) + Nvidia.Describe(x, English)));
         var title = L("פרופיל NVIDIA לרוקט ליג", "NVIDIA profile for Rocket League");
         checks.Add(Nvidia.IsRecommended(snap)
-            ? new(title, values, Ok, L("ביצועים מקסימליים ו-Low Latency פעילים למשחק.", "Maximum performance and Low Latency are on for the game."))
+            ? new(title, values, Ok, L("ביצועים מקסימליים ו-Low Latency פעילים למשחק.", "Maximum performance and Low Latency are on for the game."), Fixes.Ref("nvidia-profile"))
             : new(title, values, Warn,
                 L("שני דברים בדרייבר עוזרים לרוקט ליג: Prefer maximum performance מחזיק את הכרטיס במהירות מלאה בלי ירידות באמצע משחק, ו-Low Latency Mode מקצר את התור של הפריימים, וכך הלחיצה מגיעה למסך מהר יותר. זה רק פרופיל בדרייבר, כמו בלוח הבקרה של NVIDIA, ולא נוגע במשחק.",
                   "Two driver settings help Rocket League: Prefer maximum performance keeps the GPU at full clocks with no dips mid-match, and Low Latency Mode shortens the frame queue so your input reaches the screen sooner. It's only a driver profile, the same as the NVIDIA Control Panel, and doesn't touch the game."),
                 Fixes.Ref("nvidia-profile")));
+    }
+
+    /// <summary>
+    /// The global NVIDIA profile applies to every app without its own profile, the Windows desktop included.
+    /// "Prefer maximum performance" there keeps the card at full clocks all day: heat with nothing to show for it.
+    /// </summary>
+    private static void AddRestingCheck(List<Check> checks, string pstate, double? util, double? watts, double? temp)
+    {
+        Nvidia.SettingValue? global;
+        try { global = Nvidia.ReadGlobalPower(); }
+        catch { return; }
+        if (global is null) return;
+
+        var awake = pstate == "P0" && util is < 15;
+        var now = string.Join(" · ", new[] { pstate, watts is { } w ? $"{w:0} W" : null, temp is { } t ? $"{t:0}°C" : null }.Where(s => s is not null && s != ""));
+        var title = L("כרטיס המסך במנוחה", "GPU at rest");
+        if (global.Value == Nvidia.PreferMaxPerformance)
+            checks.Add(new(title, $"{L("לא נח", "Never rests")} · {now}", Warn,
+                L("בהגדרה הגלובלית של NVIDIA מוגדר Prefer maximum performance, ולכן הכרטיס רץ במהירות מלאה גם בשולחן העבודה. בלפטופ זה חום מיותר שמגיע למשחק כשהמחשב כבר חם. התיקון מחזיר רק את ההגדרה הגלובלית לברירת המחדל; הפרופיל של רוקט ליג נשאר על ביצועים מקסימליים.",
+                  "NVIDIA's global profile is set to Prefer maximum performance, so the card runs at full clocks even on the desktop. On a laptop that is wasted heat, and the match starts on a hot machine. The fix resets only the global setting to the driver default; Rocket League's own profile stays at maximum performance."),
+                Fixes.Ref("nvidia-global-power")));
+        else if (awake)
+            checks.Add(new(title, $"{L("ער", "Awake")} · {now}", Info,
+                L("הכרטיס לא ירד למצב מנוחה בזמן הסריקה. לפעמים תוכנה פתוחה או מסך בקצב רענון גבוה מחזיקים אותו ער.",
+                  "The card didn't drop to its resting state during the scan. An open app or a high-refresh display sometimes keeps it awake."),
+                Fixes.Ref("nvidia-global-power")));
+        else
+            checks.Add(new(title, $"{L("נח", "Resting")} · {now}", Ok, null, Fixes.Ref("nvidia-global-power")));
     }
 
     private static string? FindNvidiaSmi()

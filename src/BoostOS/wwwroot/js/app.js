@@ -2,27 +2,34 @@
 
 import { setLang, t } from './i18n.js';
 import { on, send } from './bridge.js';
-import { $, $$, toast, setAccent, aimLight, reduceMotion, icon } from './ui.js';
-import { initNav, focusFirst, renderHints } from './nav.js';
+import { $, $$, toast, setAccent, aimLight, reduceMotion } from './ui.js';
+import { initNav, focusFirst, focusEl, renderHints } from './nav.js';
 import { configure, sfx } from './sound.js';
+import { initChrome, onGameMode, gameModeFailed, renderPill, dialogOpen, closeDialog, startClock, pillHints } from './chrome.js';
+import { initFixes } from './panels/fixrun.js';
 import home from './screens/home.js';
-import scan from './screens/scan.js';
-import net from './screens/net.js';
+import diag from './screens/diag.js';
 import pad from './screens/pad.js';
+import keys from './screens/keys.js';
 import mouse from './screens/mouse.js';
-import game from './screens/game.js';
+import rlvideo from './screens/rlvideo.js';
 import settings from './screens/settings.js';
 
-const screens = { home, scan, net, pad, mouse, game, settings };
-const ACCENT = { home: 'play', scan: 'diag', net: 'diag', pad: 'diag', mouse: 'diag', game: 'game', settings: 'settings' };
+const screens = { home, diag, pad, keys, mouse, rlvideo, settings };
+const ACCENT = { home: 'play', diag: 'diag', pad: 'diag', keys: 'diag', mouse: 'diag', rlvideo: 'play', settings: 'settings' };
+const TESTS = ['pad', 'keys', 'mouse'];
 
 const app = {
-  settings: { language: 'he', sounds: true, rumble: true, startFullscreen: true, trackMatches: true },
+  settings: { language: 'he', sounds: true, rumble: true, startFullscreen: true, trackMatches: true, gameModeOnPlay: true, favoriteGame: null },
   report: null,
   scanning: false,
   scanError: null,
   game: null,
+  games: [],
   matches: [],
+  applied: [],
+  rlVideo: null,
+  running: null,
   version: '',
   fixesApplied: 0,
   current: 'home',
@@ -31,31 +38,40 @@ let rescanAfterCurrent = false;
 
 const ctx = { app, show, back, startScan, saveSettings, refreshAll, renderHints };
 Object.values(screens).forEach(s => s.init(ctx));
+initFixes(ctx);
 
 function buildAll() {
   for (const [name, s] of Object.entries(screens)) s.build($(`.screen[data-screen="${name}"]`));
   $('.power').setAttribute('aria-label', t('exit'));
+  $('#gm-pill').setAttribute('aria-label', t('gm.name'));
+  renderPill();
 }
 
-function show(name, { focus, instant } = {}) {
+/** Switch screens. opts: { focus, instant, tab, from, newest }. */
+function show(name, opts = {}) {
   const swap = () => {
     const changed = name !== app.current;
     if (changed) screens[app.current]?.leave?.();
     $$('.screen').forEach(s => { s.hidden = s.dataset.screen !== name; });
     app.current = name;
-    if (changed) screens[name].enter?.();
+    document.body.dataset.screen = name;
+    if (changed || opts.tab) screens[name].enter?.(opts);
     renderHints();
-    (focus ?? focusFirst)();
+    (opts.focus ?? (name === 'diag' ? diag.focusTarget(opts) : focusFirst))();
     if (name !== 'home') { setAccent(ACCENT[name]); aimLight(null); }
   };
-  if (document.startViewTransition && !reduceMotion && !instant && name !== app.current) document.startViewTransition(swap);
+  if (document.startViewTransition && !reduceMotion && !opts.instant && name !== app.current) document.startViewTransition(swap);
   else swap();
 }
 
+/** Back: the screen first (close a folder, a tab's own back), then one level up, like a console. */
 function back() {
+  if (dialogOpen()) { closeDialog(null); return; }
   if (screens[app.current].back?.()) return;
-  if (app.current === 'home') return;
   const from = app.current;
+  if (from === 'home') return;
+  if (TESTS.includes(from)) { show('diag', { tab: 'devices', focus: () => focusEl($(`[data-test="${from}"]`)) }); return; }
+  if (from === 'rlvideo' && rlvideo.returnTo() === 'diag') { show('diag', { tab: 'fixes', focus: () => focusEl($('#fx-video')) }); return; }
   show('home', { focus: () => home.focusTile(from) });
 }
 
@@ -69,6 +85,7 @@ function startScan() {
 
 function refreshAll() {
   Object.values(screens).forEach(s => s.refresh?.());
+  renderPill();
 }
 
 function saveSettings(next) {
@@ -80,7 +97,7 @@ function applySettings(next) {
   const langChanged = next.language !== app.settings.language;
   app.settings = next;
   configure(next);
-  if (!langChanged) { screens.settings.refresh(); return; }
+  if (!langChanged) { refreshAll(); return; }
   setLang(next.language);
   buildAll();
   show(app.current, { instant: true, focus: () => $('[data-key="language"]')?.focus({ preventScroll: true }) });
@@ -101,7 +118,9 @@ on('hello', h => {
   setLang(app.settings.language);
   buildAll();
   boot();
+  send('fixesApplied');
 });
+on('games', list => { app.games = list ?? []; refreshAll(); });
 on('settings', s => { if (JSON.stringify(s) !== JSON.stringify(app.settings)) applySettings(s); });
 on('scan', r => {
   app.scanning = false;
@@ -111,12 +130,20 @@ on('scan', r => {
 });
 on('gameMode', s => {
   app.game = s;
-  $('#game-chip').hidden = !s.active;
-  $('#game-chip').textContent = t('chip.game');
+  onGameMode(s);
   refreshAll();
 });
-on('launch', r => toast(r.ok ? t('launch.ok') : t('launch.fail')));
+on('gameRunning', g => { app.running = g.id; refreshAll(); });
+on('launch', r => toast(r.ok ? t('launch.ok', { name: r.name ?? '' }) : t('launch.fail')));
 on('notice', n => toast(n.message));
+on('matches', list => { app.matches = list ?? []; refreshAll(); });
+on('matchReport', ({ report }) => {
+  app.running = null;
+  app.matches = [report, ...(app.matches ?? []).filter(m => m.start !== report.start)].slice(0, 20);
+  refreshAll();
+  show('diag', { tab: 'sessions', newest: true });
+  toast(t('ses.fresh'));
+});
 on('error', e => {
   if (e.cmd === 'scan') {
     app.scanning = false;
@@ -124,19 +151,30 @@ on('error', e => {
     if (rescanAfterCurrent) { rescanAfterCurrent = false; startScan(); }
     else refreshAll();
   }
+  if (e.cmd === 'gameModeOn' || e.cmd === 'gameModeOff') gameModeFailed();
   sfx.error();
   toast(t('error', { msg: e.message }));
 });
 on('preview', () => toast(t('preview')));
-on('resumed', () => send('gameModeStatus'));
+on('resumed', () => { send('gameModeStatus'); send('matches'); });
 
 // ---- Boot: the boost meter fills, the arena opens, the tiles arrive ----
 
 function boot() {
   $$('.screen').forEach(s => { s.hidden = s.dataset.screen !== 'home'; });
   app.current = 'home';
-  initNav({ back, current: () => app.current, hints: () => screens[app.current].hints() });
+  document.body.dataset.screen = 'home';
+  initNav({
+    back,
+    tab: dir => { if (!dialogOpen()) screens[app.current].tab?.(dir); },
+    options: () => { if (!dialogOpen()) screens[app.current].options?.(); },
+    current: () => app.current,
+    hints: () => dialogOpen() ? [['select', t('hint.select')], ['back', t('hint.cancel')]]
+      : document.activeElement?.id === 'gm-pill' ? [...pillHints(), ['back', t('hint.back')]]
+      : screens[app.current].hints(),
+  });
   sfx.boot();
+  home.enter();
 
   const overlay = $('#boot');
   const finish = () => {
@@ -160,11 +198,11 @@ function boot() {
 
 document.addEventListener('visibilitychange', () => document.body.classList.toggle('paused', document.hidden));
 document.addEventListener('keydown', e => {
-  if (e.key === 'F11') { e.preventDefault(); send('toggleFullscreen'); }
+  if (e.key === 'F11' && app.current !== 'keys') { e.preventDefault(); send('toggleFullscreen'); }
 });
-$('.power').innerHTML = icon('power');
-$('.power').addEventListener('click', () => send('exit'));
-setInterval(() => { $('#clock').textContent = new Date().toLocaleTimeString(app.settings.language === 'en' ? 'en-GB' : 'he-IL', { hour: '2-digit', minute: '2-digit' }); }, 10000);
-$('#clock').textContent = new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+// The pill's flyout and the hints follow the focus in the top bar.
+document.addEventListener('focusin', e => { if (e.target.closest?.('.topbar')) renderHints(); });
 
+initChrome(ctx);
+startClock();
 send('hello');

@@ -7,9 +7,11 @@
   <link rel="stylesheet" href="fonts/fonts.css">
   <link rel="stylesheet" href="css/app.css">
 </head>
-<body>
-  <!-- The arena: two floodlights and faint field markings. -->
+<body data-screen="home">
+  <!-- The arena: the focused game's picture, two floodlights and faint field markings. -->
   <div class="stage" aria-hidden="true">
+    <div class="backdrop"></div>
+    <div class="backdrop"></div>
     <div class="flood flood-a"></div>
     <div class="flood flood-b"></div>
     <svg class="pitch" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
@@ -19,6 +21,7 @@
       <rect x="-40" y="250" width="200" height="400" rx="28" />
       <rect x="1440" y="250" width="200" height="400" rx="28" />
     </svg>
+    <div class="veil"></div>
   </div>
 
   <!-- Boot: the boost meter fills before the arena opens. Any key skips it. -->
@@ -34,26 +37,30 @@
   <header class="topbar">
     <div class="wordmark">BoostOS</div>
     <div class="topbar-status">
-      <span id="game-chip" class="chip chip-game" hidden></span>
       <span id="pad-status" class="chip"></span>
       <time id="clock"></time>
+      <div class="gm">
+        <button id="gm-pill" class="gm-pill" data-nav data-sfx="none" aria-pressed="false" aria-describedby="gm-flyout"></button>
+        <div id="gm-flyout" class="gm-flyout" role="tooltip"></div>
+      </div>
       <button class="power" data-nav data-sfx="none"></button>
     </div>
   </header>
 
   <main>
     <section class="screen home" data-screen="home"></section>
-    <section class="screen scan" data-screen="scan" hidden></section>
-    <section class="screen net" data-screen="net" hidden></section>
+    <section class="screen diag" data-screen="diag" hidden></section>
     <section class="screen pad" data-screen="pad" hidden></section>
+    <section class="screen keys" data-screen="keys" hidden></section>
     <section class="screen mouse" data-screen="mouse" hidden></section>
-    <section class="screen game" data-screen="game" hidden></section>
+    <section class="screen rlvideo" data-screen="rlvideo" hidden></section>
     <section class="screen settings" data-screen="settings" hidden></section>
   </main>
 
   <aside class="signature"><span>Made by Hananel Sabag</span></aside>
   <footer class="hints" id="hints"></footer>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="modal" id="modal" hidden></div>
 
   <script type="module" src="js/app.js"></script>
 </body>

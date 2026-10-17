@@ -70,7 +70,14 @@ internal static class Fixes
         ["nvidia-profile"] = new(true,
             () => JsonSerializer.Serialize(Nvidia.Apply()),
             before => { if (before is not null) Nvidia.Restore(JsonSerializer.Deserialize<Nvidia.Snapshot>(before)!); }),
+
+        ["nvidia-global-power"] = new(true,
+            () => JsonSerializer.Serialize(Nvidia.ResetGlobalPower()),
+            before => { if (before is not null) Nvidia.SetGlobalPower(JsonSerializer.Deserialize<Nvidia.SettingValue>(before)!); }),
     };
+
+    /// <summary>Every fix BoostOS knows, in the order the Fixes tab lists them.</summary>
+    public static IReadOnlyList<FixRef> All() => Defs.Keys.Select(Ref).ToList();
 
     public static bool NeedsAdmin(string id) => Defs.TryGetValue(id, out var d) && d.Admin;
 
