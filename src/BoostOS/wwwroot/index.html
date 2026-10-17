@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BoostOS</title>
+  <link rel="stylesheet" href="fonts/fonts.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <!-- The arena: two floodlights and faint field markings. -->
+  <div class="stage" aria-hidden="true">
+    <div class="flood flood-a"></div>
+    <div class="flood flood-b"></div>
+    <svg class="pitch" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+      <line x1="800" y1="-20" x2="800" y2="920" />
+      <circle cx="800" cy="450" r="190" />
+      <circle cx="800" cy="450" r="6" />
+      <rect x="-40" y="250" width="200" height="400" rx="28" />
+      <rect x="1440" y="250" width="200" height="400" rx="28" />
+    </svg>
+  </div>
+
+  <!-- Boot: the boost meter fills before the arena opens. Any key skips it. -->
+  <div class="boot" id="boot" aria-hidden="true">
+    <svg viewBox="0 0 200 200">
+      <defs><linearGradient id="boot-grad" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#FF7A1A"/><stop offset="1" stop-color="#FFD23F"/></linearGradient></defs>
+      <circle class="b-track" cx="100" cy="100" r="84"/>
+      <circle class="b-fill" cx="100" cy="100" r="84" pathLength="100"/>
+    </svg>
+    <div class="boot-word">BoostOS</div>
+  </div>
+
+  <header class="topbar">
+    <div class="wordmark">BoostOS</div>
+    <div class="topbar-status">
+      <span id="game-chip" class="chip chip-game" hidden></span>
+      <span id="pad-status" class="chip"></span>
+      <time id="clock"></time>
+      <button class="power" data-nav data-sfx="none"></button>
+    </div>
+  </header>
+
+  <main>
+    <section class="screen home" data-screen="home"></section>
+    <section class="screen scan" data-screen="scan" hidden></section>
+    <section class="screen net" data-screen="net" hidden></section>
+    <section class="screen pad" data-screen="pad" hidden></section>
+    <section class="screen mouse" data-screen="mouse" hidden></section>
+    <section class="screen game" data-screen="game" hidden></section>
+    <section class="screen settings" data-screen="settings" hidden></section>
+  </main>
+
+  <aside class="signature"><span>Made by Hananel Sabag</span></aside>
+  <footer class="hints" id="hints"></footer>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
