@@ -117,6 +117,7 @@ Headless modes, handy for checking a machine:
 BoostOS.exe --scan-json scan.json [en]   # full diagnostics as JSON
 BoostOS.exe --games-json games.json      # installed games, art, running game, Rocket League video settings
 BoostOS.exe --net-json net.json 60       # 60-second network test with every sample
+BoostOS.exe --record-json rec.json 40    # a 40-second session recording without a game: checks every probe
 BoostOS.exe --nvidia-json nv.json        # raw NVIDIA profile fields, global profile included
 ```
 
