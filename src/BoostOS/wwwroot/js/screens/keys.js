@@ -61,7 +61,7 @@ const screen = {
         </div></div>
         <div class="keys-stats">
           <div class="card readout"><b id="k-last">—</b><span>${t('keys.last')}</span></div>
-          <div class="card readout"><b id="k-held">0</b><span>${t('keys.held')}</span></div>
+          <div class="card readout"><b id="k-held">0</b><span id="k-held-label">${t('keys.held')}</span></div>
           <div class="card readout"><b id="k-seen">0</b><span>${t('keys.seen', { n: ALL.length })}</span></div>
           <p class="note">${t('keys.note')}</p>
           <button class="btn" data-nav id="k-reset">${t('keys.reset')}</button>
@@ -124,7 +124,8 @@ function paint() {
     k.classList.toggle('on', held.has(k.dataset.code));
     k.classList.toggle('seen', seen.has(k.dataset.code));
   });
-  $('#k-held', root).textContent = `${held.size} · ${t('keys.max', { n: maxHeld })}`;
+  $('#k-held', root).textContent = String(held.size);
+  $('#k-held-label', root).textContent = maxHeld ? `${t('keys.held')} · ${t('keys.max', { n: maxHeld })}` : t('keys.held');
   $('#k-seen', root).textContent = String(ALL.filter(c => seen.has(c)).length);
 }
 

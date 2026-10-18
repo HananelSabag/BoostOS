@@ -6,7 +6,7 @@ using BoostOS.Core;
 namespace BoostOS.Game;
 
 /// <summary>
-/// Samples system counters every two seconds while Rocket League is open, without reading the game process.
+/// Samples system counters every two seconds while a game is open, without reading the game process.
 /// CPU collection remains independent of the optional driver stream. Detailed samples are archived at Finish.
 /// </summary>
 internal sealed class MatchRecorder : IDisposable

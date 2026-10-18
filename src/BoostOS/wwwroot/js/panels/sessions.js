@@ -16,19 +16,30 @@ const panel = {
     root.innerHTML = `<div class="ses"><nav class="ses-list" id="ses-list" aria-label="${t('ses.list')}"></nav><article class="ses-detail" id="ses-detail"></article></div>`;
     root.addEventListener('focusin', e => {
       const item = e.target.closest('[data-ses]');
-      if (item && Number(item.dataset.ses) !== selected) { selected = Number(item.dataset.ses); renderDetail(); markSelected(); }
+      if (item && Number(item.dataset.ses) !== selected) {
+        selected = Number(item.dataset.ses);
+        $('#ses-list', root).dataset.key = `${(ctx.app.matches ?? []).length}|${ctx.app.matches?.[0]?.start}|${ctx.app.games.length}|${selected}`;
+        renderDetail();
+        markSelected();
+      }
     });
     this.refresh();
   },
 
   /** A session that just ended opens here, selected. */
-  showNewest() { selected = 0; this.refresh(); },
+  showNewest() { selected = 0; delete $('#ses-list', root).dataset.key; this.refresh(); },
 
   refresh() {
     if (!root) return;
     const list = ctx.app.matches ?? [];
     if (selected >= list.length) selected = 0;
-    $('#ses-list', root).innerHTML = list.length ? list.map((m, i) => {
+    // Redraw only when the sessions (or the art for them) changed, and keep the focus where it was.
+    const key = `${list.length}|${list[0]?.start}|${ctx.app.games.length}|${selected}`;
+    const box = $('#ses-list', root);
+    if (box.dataset.key === key) return;
+    box.dataset.key = key;
+    const focused = document.activeElement?.closest?.('[data-ses]')?.dataset.ses;
+    box.innerHTML = list.length ? list.map((m, i) => {
       const game = gameOf(m);
       const worst = insights(m).find(x => x[0] !== 'ok')?.[0] ?? 'ok';
       return `<button class="ses-item s-${worst}" data-nav data-ses="${i}"${i === 0 ? ' data-default' : ''} aria-current="${i === selected}">
@@ -38,6 +49,7 @@ const panel = {
         <span class="dot"></span>
       </button>`;
     }).join('') : '';
+    if (focused != null) $(`[data-ses="${focused}"]`, box)?.focus({ preventScroll: true });
     renderDetail();
   },
 

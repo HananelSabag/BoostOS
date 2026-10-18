@@ -43,14 +43,14 @@ function controllerSvg(kind) {
     </g>`).join('');
   return `<svg class="ctl" viewBox="0 0 800 470" role="img" aria-label="${esc(t('pad.title'))}">
     <defs>
-      <clipPath id="clip-l2"><rect x="158" y="12" width="104" height="38" rx="12"/></clipPath>
-      <clipPath id="clip-r2"><rect x="538" y="12" width="104" height="38" rx="12"/></clipPath>
+      <clipPath id="clip-l2"><rect x="158" y="2" width="104" height="36" rx="12"/></clipPath>
+      <clipPath id="clip-r2"><rect x="538" y="2" width="104" height="36" rx="12"/></clipPath>
     </defs>
     <!-- triggers fill from the bottom as they're pressed -->
-    <g class="trig" data-b="6"><rect class="cap" x="158" y="12" width="104" height="38" rx="12"/><rect class="fill" id="fill-6" clip-path="url(#clip-l2)" x="158" y="50" width="104" height="0"/><text x="210" y="32" text-anchor="middle" dominant-baseline="central">${L[6]}</text></g>
-    <g class="trig" data-b="7"><rect class="cap" x="538" y="12" width="104" height="38" rx="12"/><rect class="fill" id="fill-7" clip-path="url(#clip-r2)" x="538" y="50" width="104" height="0"/><text x="590" y="32" text-anchor="middle" dominant-baseline="central">${L[7]}</text></g>
-    <g class="btn-pill" data-b="4"><rect class="cap" x="150" y="58" width="120" height="22" rx="11"/><text x="210" y="69" text-anchor="middle" dominant-baseline="central">${L[4]}</text></g>
-    <g class="btn-pill" data-b="5"><rect class="cap" x="530" y="58" width="120" height="22" rx="11"/><text x="590" y="69" text-anchor="middle" dominant-baseline="central">${L[5]}</text></g>
+    <g class="trig" data-b="6"><rect class="cap" x="158" y="2" width="104" height="36" rx="12"/><rect class="fill" id="fill-6" clip-path="url(#clip-l2)" x="158" y="38" width="104" height="0"/><text x="210" y="21" text-anchor="middle" dominant-baseline="central">${L[6]}</text></g>
+    <g class="trig" data-b="7"><rect class="cap" x="538" y="2" width="104" height="36" rx="12"/><rect class="fill" id="fill-7" clip-path="url(#clip-r2)" x="538" y="38" width="104" height="0"/><text x="590" y="21" text-anchor="middle" dominant-baseline="central">${L[7]}</text></g>
+    <g class="btn-pill" data-b="4"><rect class="cap" x="152" y="46" width="116" height="20" rx="10"/><text x="210" y="56.5" text-anchor="middle" dominant-baseline="central">${L[4]}</text></g>
+    <g class="btn-pill" data-b="5"><rect class="cap" x="532" y="46" width="116" height="20" rx="10"/><text x="590" y="56.5" text-anchor="middle" dominant-baseline="central">${L[5]}</text></g>
 
     <path class="body" d="M168 92C230 66 570 66 632 92C712 116 752 186 770 290C788 392 760 446 704 450C656 454 632 418 606 372C588 340 560 330 520 330L280 330C240 330 212 340 194 372C168 418 144 454 96 450C40 446 12 392 30 290C48 186 88 116 168 92Z"/>
 
@@ -188,8 +188,8 @@ function draw(gp) {
   for (const i of [6, 7]) {
     const v = gp.buttons[i]?.value ?? 0;
     const fill = svg.querySelector(`#fill-${i}`);
-    fill.setAttribute('y', String(50 - 38 * v));
-    fill.setAttribute('height', String(38 * v));
+    fill.setAttribute('y', String(38 - 36 * v));
+    fill.setAttribute('height', String(36 * v));
   }
 
   const [lx = 0, ly = 0, rx = 0, ry = 0] = gp.axes;

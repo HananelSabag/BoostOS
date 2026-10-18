@@ -391,6 +391,7 @@ internal sealed class MainForm : Form
             try { status = await Task.Run(() => GameMode.Restore(periodicWifiSpikes)); }
             catch (Exception ex) { restoreError = ex; }
         }
+        Post("gameRunning", new { id = stillRunning?.Id, name = stillRunning?.Name });
 
         // Come back to the front only if BoostOS stepped aside for this match.
         if (gameClosed && WindowState == FormWindowState.Minimized && !IsDisposed && !Disposing)

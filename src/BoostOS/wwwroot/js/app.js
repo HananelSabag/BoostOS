@@ -84,8 +84,14 @@ function startScan() {
 }
 
 function refreshAll() {
+  const before = document.activeElement;
   Object.values(screens).forEach(s => s.refresh?.());
   renderPill();
+  // A redraw must never leave the D-pad with nothing focused: fall back to the screen's natural spot.
+  if (before && before !== document.body && !before.isConnected && !dialogOpen()) {
+    if (app.current === 'diag') diag.focusTarget()();
+    else focusFirst();
+  }
 }
 
 function saveSettings(next) {

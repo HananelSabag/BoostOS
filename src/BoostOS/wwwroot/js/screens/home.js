@@ -106,7 +106,11 @@ const screen = {
       list.innerHTML = issues.slice(0, 3).map(c =>
         `<li class="s-${c.status}"><span class="dot"></span><span><b>${esc(c.title)}</b> ${valueHtml(c.value)}</span></li>`).join('');
     }
-    if (games.length && document.activeElement?.closest?.('.home') == null && ctx.app.current === 'home') setBackdrop(favoriteOf(ctx.app)?.wide);
+    // The games can arrive after the focus has settled: show the focused game's picture (or the favourite's).
+    if (ctx.app.current === 'home') {
+      const focusedId = document.activeElement?.closest?.('[data-game]')?.dataset.game;
+      setBackdrop((games.find(g => g.id === focusedId) ?? favoriteOf(ctx.app))?.wide);
+    }
     if (hubFor) renderHub(hubFor, true);
   },
 };

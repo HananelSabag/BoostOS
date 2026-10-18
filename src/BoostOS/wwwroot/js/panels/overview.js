@@ -63,8 +63,10 @@ const panel = {
     fixAll.hidden = nFix === 0;
     if (!fixBusy()) { fixAll.disabled = false; fixAll.innerHTML = `${icon('wrench')}${t('scan.fixAll', { n: nFix })}`; }
 
-    const focused = document.activeElement?.closest?.('[data-sec],[data-check],[data-fix]');
-    const focusKey = focused?.dataset.sec ?? focused?.dataset.check ?? null;
+    // Remember where the focus is (a check row, a Fix button inside one, or an area header) to put it back.
+    const active = document.activeElement;
+    const focusCheck = active?.closest?.('[data-check]')?.dataset.check;
+    const focusSec = active?.closest?.('.sec')?.querySelector('[data-sec]')?.dataset.sec;
     list.innerHTML = report.sections.map((s, si) => {
       const issues = s.checks.filter(c => c.status === 'bad' || c.status === 'warn');
       const worst = issues.some(c => c.status === 'bad') ? 'bad' : issues.length ? 'warn' : 'ok';
@@ -80,7 +82,7 @@ const panel = {
         ${open ? `<div class="sec-body">${s.checks.map((c, ci) => row(c, `${si}-${ci}`)).join('')}</div>` : ''}
       </section>`;
     }).join('');
-    if (focusKey) ($(`[data-sec="${focusKey}"]`, list) ?? $(`[data-check="${focusKey}"]`, list))?.focus({ preventScroll: true });
+    if (focusSec) ((focusCheck && $(`[data-check="${focusCheck}"]`, list)) || $(`[data-sec="${focusSec}"]`, list))?.focus({ preventScroll: true });
   },
 
   hints: () => [],

@@ -58,6 +58,17 @@ internal static class Program
             return 0;
         }
 
+        // Records the system the way a game session does, without a game: checks every probe on a new machine.
+        if (args is ["--record-json", var recordPath, ..])
+        {
+            var seconds = args.Length > 2 && int.TryParse(args[2], out var s) ? Math.Max(25, s) : 40;
+            using var recorder = new Game.MatchRecorder(gameMode: false, Game.GameLibrary.List().FirstOrDefault());
+            Thread.Sleep(seconds * 1000);
+            var report = recorder.FinishTo(Path.Combine(Path.GetTempPath(), "boostos-record-test"));
+            File.WriteAllText(recordPath, JsonSerializer.Serialize(report, Json));
+            return 0;
+        }
+
         if (args is ["--nvidia-json", var nvPath, ..])
         {
             File.WriteAllText(nvPath, JsonSerializer.Serialize(Nvidia.Dump(), Json));

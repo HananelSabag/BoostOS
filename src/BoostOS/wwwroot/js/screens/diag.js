@@ -53,7 +53,7 @@ const screen = {
   },
 
   enter(opts = {}) {
-    select(opts.tab ?? current, { quiet: true, force: true });
+    select(opts.tab ?? current, { force: true });
     if (opts.tab === 'sessions' && opts.newest) sessions.showNewest();
   },
 
@@ -63,6 +63,7 @@ const screen = {
   tab(dir) {
     const i = TABS.findIndex(x => x.id === current);
     const next = TABS[(i + dir + TABS.length) % TABS.length];
+    sfx.move();
     focusEl($(`[data-tab="${next.id}"]`, root));
   },
 
@@ -94,7 +95,8 @@ function badge(id, n) {
   el.hidden = !n;
 }
 
-function select(id, { quiet = false, force = false } = {}) {
+// The sound comes from whatever moved the focus (D-pad or bumper), so switching itself stays silent.
+function select(id, { force = false } = {}) {
   if (id === current && !force) return;
   const prev = TABS.find(x => x.id === current);
   const changed = id !== current;
@@ -106,7 +108,6 @@ function select(id, { quiet = false, force = false } = {}) {
   view.classList.remove('enter');
   if (changed) { void view.offsetWidth; view.classList.add('enter'); }
   TABS.find(x => x.id === id).panel.enter?.();
-  if (changed && !quiet) sfx.move();
   ctx.renderHints();
 }
 

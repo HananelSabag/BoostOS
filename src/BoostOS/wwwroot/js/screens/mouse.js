@@ -14,7 +14,11 @@ let wheel = 0;
 const BUTTONS = [[0, 'mouse.left'], [2, 'mouse.right'], [1, 'mouse.middle'], [3, 'mouse.back'], [4, 'mouse.forward']];
 
 export default {
-  init(c) { ctx = c; },
+  init(c) {
+    ctx = c;
+    // Releases can happen outside the pad; listen once for the whole page (build runs again on a language change).
+    addEventListener('mouseup', e => { if (ctx.app.current === 'mouse') $(`[data-mb="${e.button}"]`, root)?.classList.remove('on'); });
+  },
 
   build(el) {
     root = el;
@@ -46,7 +50,7 @@ export default {
       if (e.button >= 1) e.preventDefault(); // no autoscroll, no browser back
     };
     pad.addEventListener('mousedown', e => press(e, true));
-    addEventListener('mouseup', e => { if (ctx.app.current === 'mouse') press(e, false); });
+    pad.addEventListener('mouseup', e => press(e, false));
     pad.addEventListener('contextmenu', e => e.preventDefault());
     pad.addEventListener('auxclick', e => e.preventDefault());
     pad.addEventListener('wheel', e => {

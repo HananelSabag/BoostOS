@@ -11,6 +11,7 @@ let root;
 let from = 'home';
 let pending = {};
 let saving = false;
+let firstPaint = false;
 
 const screen = {
   init(c) {
@@ -72,6 +73,7 @@ const screen = {
   enter(opts = {}) {
     from = opts.from ?? from;
     pending = {};
+    firstPaint = true;
     send('rlVideo');
     this.refresh();
   },
@@ -96,6 +98,11 @@ const screen = {
       $(`[data-set="${id}"][data-opt="${opt}"]`, list)?.focus({ preventScroll: true });
     }
     paint();
+    // The settings arrive after the screen opened: start on the first setting, not on the back button.
+    if (firstPaint && (document.activeElement === $('.back', root) || document.activeElement === document.body)) {
+      firstPaint = false;
+      $('.seg-btn[aria-pressed="true"]', list)?.focus({ preventScroll: true });
+    }
   },
 };
 
@@ -105,7 +112,7 @@ export default screen;
 function paint() {
   const s = ctx.app.rlVideo;
   const running = !!s?.running;
-  $('#vid-meta', root).textContent = s?.found ? `${s.resolution ?? ''} · ${running ? t('vid.running') : t('vid.closed')}` : '';
+  $('#vid-meta', root).innerHTML = s?.found ? `<bdi>${esc(s.resolution ?? '')}</bdi> · ${running ? t('vid.running') : t('vid.closed')}` : '';
   for (const x of s?.settings ?? []) {
     const shown = pending[x.id] ?? x.value;
     $$(`[data-set="${x.id}"]`, root).forEach(b => {
