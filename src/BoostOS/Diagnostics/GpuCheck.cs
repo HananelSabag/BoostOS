@@ -38,6 +38,7 @@ internal static class GpuCheck
         if (N(2) is { } vram) checks.Add(new(L("זיכרון גרפי", "Video memory"), $"{vram / 1024:0.#} GB", Info));
 
         AddProfileCheck(checks);
+        AddFrameCapCheck(checks);
         AddRestingCheck(checks, F(12), N(13), N(8), N(7));
 
         if (N(5) is { } width && N(6) is { } maxWidth)
@@ -92,6 +93,27 @@ internal static class GpuCheck
                 L("שני דברים בדרייבר עוזרים לרוקט ליג: Prefer maximum performance מחזיק את הכרטיס במהירות מלאה בלי ירידות באמצע משחק, ו-Low Latency Mode מקצר את התור של הפריימים, וכך הלחיצה מגיעה למסך מהר יותר. זה רק פרופיל בדרייבר, כמו בלוח הבקרה של NVIDIA, ולא נוגע במשחק.",
                   "Two driver settings help Rocket League: Prefer maximum performance keeps the GPU at full clocks with no dips mid-match, and Low Latency Mode shortens the frame queue so your input reaches the screen sooner. It's only a driver profile, the same as the NVIDIA Control Panel, and doesn't touch the game."),
                 Fixes.Ref("nvidia-profile")));
+    }
+
+    /// <summary>
+    /// Rocket League's frame cap in the driver. Frames beyond what the screen shows are heat for nothing, and on a
+    /// laptop that runs into its heat limit that heat costs clock speed.
+    /// </summary>
+    private static void AddFrameCapCheck(List<Check> checks)
+    {
+        uint cap;
+        bool gsync;
+        try { cap = Nvidia.ReadFrameCap(); gsync = Nvidia.GsyncOn(); }
+        catch { return; }
+        var hz = Fixes.MainRefreshHz();
+        var recommended = Nvidia.RecommendedFrameCap(hz, gsync);
+        var title = L("תקרת FPS לרוקט ליג (NVIDIA)", "Rocket League FPS cap (NVIDIA)");
+        checks.Add(cap == 0
+            ? new(title, L("ללא תקרה", "No cap"), Warn,
+                L($"המסך מציג {hz} פריימים בשנייה. כל פריים מעבר לזה רק מחמם את הכרטיס, ובלפטופ שמגיע לגבול החום זה עולה במהירות. התיקון קובע תקרה של {recommended} FPS בפרופיל של המשחק בדרייבר{(gsync ? " (3 מתחת לקצב המסך, כי G-SYNC פעיל: ההשהיה הכי נמוכה)" : "")}.",
+                  $"The screen shows {hz} frames a second. Every frame beyond that only heats the card, and on a laptop at its heat limit that costs clock speed. The fix sets a {recommended} FPS cap in the game's driver profile{(gsync ? " (3 below the refresh rate because G-SYNC is on: the lowest delay)" : "")}."),
+                Fixes.Ref("nvidia-fps-cap"))
+            : new(title, $"{cap} FPS", Ok, null, Fixes.Ref("nvidia-fps-cap")));
     }
 
     /// <summary>

@@ -73,6 +73,14 @@ internal static class Fixes
             () => JsonSerializer.Serialize(Nvidia.Apply()),
             before => { if (before is not null) Nvidia.Restore(JsonSerializer.Deserialize<Nvidia.Snapshot>(before)!); }),
 
+        ["nvidia-fps-cap"] = new(true,
+            () =>
+            {
+                var cap = Nvidia.RecommendedFrameCap(MainRefreshHz(), Nvidia.GsyncOn());
+                return JsonSerializer.Serialize(new FrameCapSnapshot(Nvidia.ApplyFrameCap(cap)));
+            },
+            before => Nvidia.RestoreFrameCap(before is null ? null : JsonSerializer.Deserialize<FrameCapSnapshot>(before)?.Before)),
+
         ["nvidia-global-power"] = new(true,
             () => JsonSerializer.Serialize(Nvidia.ResetGlobalPower()),
             before => { if (before is not null) Nvidia.SetGlobalPower(JsonSerializer.Deserialize<Nvidia.SettingValue>(before)!); }),
@@ -206,6 +214,15 @@ internal static class Fixes
         {
             try { File.Delete(outFile); } catch { }
         }
+    }
+
+    internal sealed record FrameCapSnapshot(Nvidia.SettingValue? Before);
+
+    /// <summary>Refresh rate of the main display (the one games open on).</summary>
+    internal static int MainRefreshHz()
+    {
+        var displays = DisplayCheck.Enumerate();
+        return (displays.FirstOrDefault(d => d.IsPrimary) ?? displays.FirstOrDefault())?.Hz is > 0 and var hz ? hz : 60;
     }
 
     // ---- Helpers ----

@@ -1,4 +1,4 @@
-# BoostOS
+﻿# BoostOS
 
 **A console-style home screen for Windows that gets your PC ready to play, and puts it back afterwards.**
 
@@ -23,15 +23,15 @@ back by itself and you get a short report on how the PC held up.
 
 | | |
 |---|---|
-| **Favourite game** | The big first tile, with the game's real art (from the launchers' own local caches, nothing is downloaded). △ / Y on any game puts it first. |
+| **Favourite game** | The big first tile, with the game's real art (from the launchers' own local caches, nothing is downloaded). â–³ / Y on any game puts it first. |
 | **Games** | A folder that unfolds a row of every installed game underneath it: Epic Games and Steam, found from the launchers' files. Up returns to the rail, Back closes the row. |
 | **Game Mode** | One pill next to the power button. Focus shows what it will do; a press switches it. It closes background sync, updaters and phone extras (OneDrive, Steam unless the game is on Steam, Phone Link, Widgets, Teams, Copilot, Adobe) and sets *Best performance*. It turns on by itself when a game starts from BoostOS and is restored when the game closes, even after a crash. |
 | **Diagnostics** | One screen with five tabs, switched with L1/R1 (LB/RB, Q/E): |
-| ↳ Overview | The readiness score and ten areas of the PC. Areas with something to improve open by themselves; the rest fold to one line. |
-| ↳ Fixes | Everything BoostOS can change, grouped into *worth fixing*, *changed by BoostOS* (with Undo), *already good* and *not needed here*. |
-| ↳ Network | Router and internet pinged side by side, drawn live. It tells loss from a router that only limits pings, and finds spikes on a fixed beat. |
-| ↳ Devices | What's plugged in, plus a controller test (a drawn controller that lights up, and a drift test that recommends a deadzone), a keyboard test (every key, and how many register at once) and a mouse test (polling rate, buttons, wheel). |
-| ↳ Game data | Every recorded session: what it means in plain words first, then GPU heat and how often it slowed down, the CPU's real clock, router and internet ping during play, Wi-Fi signal, memory, and which other apps used the CPU. |
+| â†³ Overview | The readiness score and ten areas of the PC. Areas with something to improve open by themselves; the rest fold to one line. |
+| â†³ Fixes | Everything BoostOS can change, grouped into *worth fixing*, *changed by BoostOS* (with Undo), *already good* and *not needed here*. |
+| â†³ Network | Router and internet pinged side by side, drawn live. It tells loss from a router that only limits pings, and finds spikes on a fixed beat. |
+| â†³ Devices | What's plugged in, plus a controller test (a drawn controller that lights up, and a drift test that recommends a deadzone), a keyboard test (every key, and how many register at once) and a mouse test (polling rate, buttons, wheel). |
+| â†³ Game data | Every recorded session: what it means in plain words first, then GPU heat and how often it slowed down, the CPU's real clock, router and internet ping during play, Wi-Fi signal, memory, and which other apps used the CPU. |
 | **Rocket League video** | The game's own Video settings, read from its settings file and saved back to it while the game is closed. When the last session showed the GPU held back by heat, BoostOS suggests lighter settings. Everything it changes can be put back. |
 | **Settings** | Language, favourite game, Game Mode on start, sounds, rumble, full screen, game data, and *Undo all fixes*. Exit asks first, and offers to just go to the desktop. |
 
@@ -58,17 +58,18 @@ Everything it changes is a Windows setting, a driver profile or a game's setting
 
 | Fix | What changes | Admin |
 |---|---|:-:|
-| NVIDIA on the desktop | Global *Power management mode* back to the driver default, so the card rests outside games | ✓ |
-| NVIDIA profile | Rocket League profile: *Prefer maximum performance* + *Low Latency Mode: On* (via NVAPI) | ✓ |
-| Rocket League GPU | Graphics preference for `RocketLeague.exe` → *High performance* | |
+| Rocket League FPS cap | NVIDIA *Max Frame Rate* for the game: the screen's refresh rate, or 3 below it with G-SYNC | ✓ |
+| NVIDIA on the desktop | Global *Power management mode* back to the driver default, so the card rests outside games | âœ“ |
+| NVIDIA profile | Rocket League profile: *Prefer maximum performance* + *Low Latency Mode: On* (via NVAPI) | âœ“ |
+| Rocket League GPU | Graphics preference for `RocketLeague.exe` â†’ *High performance* | |
 | VSync | `UseVsync=False` in `TASystemSettings.ini` (backed up first) | |
 | BoostOS power plan | A copy of Balanced: on the charger aggressive CPU boost and no PCI Express / USB / Wi-Fi power saving; on battery boost off and every saving on | |
-| Power mode | Windows power mode → *Best performance* | |
-| Windows Game Mode | Game Mode → on | |
-| Windowed optimizations | *Optimizations for windowed games* → on | |
-| Background recording | Game Bar *Record what happened* → off | |
-| Wi-Fi power | Wireless adapter power saving on AC → *Maximum Performance* | |
-| Wi-Fi roaming | Intel *Roaming Aggressiveness* → *Lowest* | ✓ |
+| Power mode | Windows power mode â†’ *Best performance* | |
+| Windows Game Mode | Game Mode â†’ on | |
+| Windowed optimizations | *Optimizations for windowed games* â†’ on | |
+| Background recording | Game Bar *Record what happened* â†’ off | |
+| Wi-Fi power | Wireless adapter power saving on AC â†’ *Maximum Performance* | |
+| Wi-Fi roaming | Intel *Roaming Aggressiveness* â†’ *Lowest* | âœ“ |
 
 Each fix stores the value it replaced in `%LOCALAPPDATA%\BoostOS\fixes.json`; *Undo* writes it back.
 Admin fixes run in a second copy of BoostOS started elevated, so a batch asks for approval once.
@@ -124,29 +125,29 @@ BoostOS.exe --nvidia-json nv.json        # raw NVIDIA profile fields, global pro
 
 ## Things learned along the way
 
-- **The global NVIDIA profile matters on a laptop.** On the test machine the global *Power management mode* was *Prefer maximum performance*, so the GPU sat at P0 drawing ~29 W at 63 °C on an idle desktop. Games keep their own profile; the desktop doesn't need full clocks.
-- **Heat, not load, was the limit.** A recorded session showed the GPU at only ~45 % load but at its 87 °C target, slowing down from heat 60 % of the time. That's why sessions now record the CPU's real clock too, and why the video settings screen suggests lighter settings after a hot session.
+- **The global NVIDIA profile matters on a laptop.** On the test machine the global *Power management mode* was *Prefer maximum performance*, so the GPU sat at P0 drawing ~29 W at 63 Â°C on an idle desktop. Games keep their own profile; the desktop doesn't need full clocks.
+- **Heat, not load, was the limit.** A recorded session showed the GPU at only ~45 % load but at its 87 Â°C target, slowing down from heat 60 % of the time. That's why sessions now record the CPU's real clock too, and why the video settings screen suggests lighter settings after a hot session.
 - **A router can fake packet loss.** The home router used for testing answers a ~15 second burst of pings and then drops exactly one a second once the total passes ~7/s. The test runs at 2.5 pings/s per target, and the in-game probe at one a second.
 - **NVAPI struct versions matter.** Newer NVAPI headers add a 64-bit member to `NVDRS_SETTING` (12,328 bytes); the driver tested here expects the older 12,320-byte layout. BoostOS tries both.
 - **Measure before you look.** Idle CPU load is sampled before the scan starts, otherwise the scan measures itself.
 
 ## License
 
-[MIT](LICENSE) © 2026 Hananel Sabag. Rocket League is a trademark of Psyonix; BoostOS is an independent project and isn't affiliated with Psyonix, Epic Games, Valve or NVIDIA.
+[MIT](LICENSE) Â© 2026 Hananel Sabag. Rocket League is a trademark of Psyonix; BoostOS is an independent project and isn't affiliated with Psyonix, Epic Games, Valve or NVIDIA.
 
 ---
 
-## בעברית
+## ×‘×¢×‘×¨×™×ª
 
-BoostOS הוא מסך בית בסגנון קונסולה לווינדוס, שמכין את המחשב למשחק ומחזיר אותו למצב הרגיל אחרי.
+BoostOS ×”×•× ×ž×¡×š ×‘×™×ª ×‘×¡×’× ×•×Ÿ ×§×•× ×¡×•×œ×” ×œ×•×•×™× ×“×•×¡, ×©×ž×›×™×Ÿ ××ª ×”×ž×—×©×‘ ×œ×ž×©×—×§ ×•×ž×—×–×™×¨ ××•×ª×• ×œ×ž×¦×‘ ×”×¨×’×™×œ ××—×¨×™.
 
-- **משחק מועדף:** הריבוע הגדול הראשון, עם התמונה של המשחק. △ על כל משחק שם אותו בהתחלה.
-- **משחקים:** תיקייה שנפרסת לשורה מתחת עם כל המשחקים המותקנים מ-Epic ומ-Steam. למעלה חוזרים, חזרה סוגרת.
-- **מצב משחק:** כפתור קטן ליד כפתור היציאה. נדלק לבד כשמפעילים משחק, וכשהמשחק נסגר הכל חוזר לבד.
-- **אבחון:** מסך אחד עם לשוניות: סקירה (מה תקין ומה לא), תיקונים, רשת, התקנים (בדיקת שלט, מקלדת ועכבר) ונתוני משחק.
-- **נתוני משחק:** אחרי כל משחק: חום כרטיס המסך וכמה הוא האט, מהירות המעבד, פינג ו-Wi-Fi בזמן המשחק, ואיזה תוכנות עבדו ברקע. קודם במילים פשוטות, אחר כך המספרים.
-- **הגדרות וידאו לרוקט ליג:** ההגדרות של המשחק עצמו, עם המלצות לפי מה שנמדד במחשב, ושמירה ישר לקובץ של המשחק.
-- **בטוח עם האנטי-צ'יט:** BoostOS לא פותח את תהליך המשחק ולא נוגע בזיכרון שלו. הוא משנה רק הגדרות של ווינדוס, פרופיל בדרייבר וקובץ ההגדרות של המשחק, ואת כל השינויים אפשר להחזיר.
-- **שפה:** עברית או אנגלית.
+- **×ž×©×—×§ ×ž×•×¢×“×£:** ×”×¨×™×‘×•×¢ ×”×’×“×•×œ ×”×¨××©×•×Ÿ, ×¢× ×”×ª×ž×•× ×” ×©×œ ×”×ž×©×—×§. â–³ ×¢×œ ×›×œ ×ž×©×—×§ ×©× ××•×ª×• ×‘×”×ª×—×œ×”.
+- **×ž×©×—×§×™×:** ×ª×™×§×™×™×” ×©× ×¤×¨×¡×ª ×œ×©×•×¨×” ×ž×ª×—×ª ×¢× ×›×œ ×”×ž×©×—×§×™× ×”×ž×•×ª×§× ×™× ×ž-Epic ×•×ž-Steam. ×œ×ž×¢×œ×” ×—×•×–×¨×™×, ×—×–×¨×” ×¡×•×’×¨×ª.
+- **×ž×¦×‘ ×ž×©×—×§:** ×›×¤×ª×•×¨ ×§×˜×Ÿ ×œ×™×“ ×›×¤×ª×•×¨ ×”×™×¦×™××”. × ×“×œ×§ ×œ×‘×“ ×›×©×ž×¤×¢×™×œ×™× ×ž×©×—×§, ×•×›×©×”×ž×©×—×§ × ×¡×’×¨ ×”×›×œ ×—×•×–×¨ ×œ×‘×“.
+- **××‘×—×•×Ÿ:** ×ž×¡×š ××—×“ ×¢× ×œ×©×•× ×™×•×ª: ×¡×§×™×¨×” (×ž×” ×ª×§×™×Ÿ ×•×ž×” ×œ×), ×ª×™×§×•× ×™×, ×¨×©×ª, ×”×ª×§× ×™× (×‘×“×™×§×ª ×©×œ×˜, ×ž×§×œ×“×ª ×•×¢×›×‘×¨) ×•× ×ª×•× ×™ ×ž×©×—×§.
+- **× ×ª×•× ×™ ×ž×©×—×§:** ××—×¨×™ ×›×œ ×ž×©×—×§: ×—×•× ×›×¨×˜×™×¡ ×”×ž×¡×š ×•×›×ž×” ×”×•× ×”××˜, ×ž×”×™×¨×•×ª ×”×ž×¢×‘×“, ×¤×™× ×’ ×•-Wi-Fi ×‘×–×ž×Ÿ ×”×ž×©×—×§, ×•××™×–×” ×ª×•×›× ×•×ª ×¢×‘×“×• ×‘×¨×§×¢. ×§×•×“× ×‘×ž×™×œ×™× ×¤×©×•×˜×•×ª, ××—×¨ ×›×š ×”×ž×¡×¤×¨×™×.
+- **×”×’×“×¨×•×ª ×•×™×“××• ×œ×¨×•×§×˜ ×œ×™×’:** ×”×”×’×“×¨×•×ª ×©×œ ×”×ž×©×—×§ ×¢×¦×ž×•, ×¢× ×”×ž×œ×¦×•×ª ×œ×¤×™ ×ž×” ×©× ×ž×“×“ ×‘×ž×—×©×‘, ×•×©×ž×™×¨×” ×™×©×¨ ×œ×§×•×‘×¥ ×©×œ ×”×ž×©×—×§.
+- **×‘×˜×•×— ×¢× ×”×× ×˜×™-×¦'×™×˜:** BoostOS ×œ× ×¤×•×ª×— ××ª ×ª×”×œ×™×š ×”×ž×©×—×§ ×•×œ× × ×•×’×¢ ×‘×–×™×›×¨×•×Ÿ ×©×œ×•. ×”×•× ×ž×©× ×” ×¨×§ ×”×’×“×¨×•×ª ×©×œ ×•×•×™× ×“×•×¡, ×¤×¨×•×¤×™×œ ×‘×“×¨×™×™×‘×¨ ×•×§×•×‘×¥ ×”×”×’×“×¨×•×ª ×©×œ ×”×ž×©×—×§, ×•××ª ×›×œ ×”×©×™× ×•×™×™× ××¤×©×¨ ×œ×”×—×–×™×¨.
+- **×©×¤×”:** ×¢×‘×¨×™×ª ××• ×× ×’×œ×™×ª.
 
-נבנה על ידי **חננאל סבג**. קוד פתוח ברישיון [MIT](LICENSE).
+× ×‘× ×” ×¢×œ ×™×“×™ **×—× × ××œ ×¡×‘×’**. ×§×•×“ ×¤×ª×•×— ×‘×¨×™×©×™×•×Ÿ [MIT](LICENSE).

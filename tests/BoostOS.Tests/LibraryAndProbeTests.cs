@@ -65,6 +65,14 @@ public class LibraryAndProbeTests
     }
 
     [Fact]
+    public void Frame_cap_follows_the_screen_and_stays_under_it_with_gsync()
+    {
+        Assert.Equal(152u, Nvidia.RecommendedFrameCap(155, gsync: true));
+        Assert.Equal(155u, Nvidia.RecommendedFrameCap(155, gsync: false));
+        Assert.Equal(30u, Nvidia.RecommendedFrameCap(24, gsync: true)); // never a silly low cap
+    }
+
+    [Fact]
     public void Video_settings_map_to_the_games_own_keys()
     {
         Assert.Equal([("Fullscreen", "True"), ("Borderless", "False")], RlVideo.Keys("display", "fullscreen").ToArray());

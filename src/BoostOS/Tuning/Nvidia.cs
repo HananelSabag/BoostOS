@@ -17,6 +17,8 @@ internal static class Nvidia
     public const uint PreferMaxPerformance = 1;        // PREFERRED_PSTATE_PREFER_MAX
     public const uint PrerenderLimitId = 0x007BA09E;   // PRERENDERLIMIT_ID; 1 = "Low Latency Mode: On"
     public const uint LowLatencyOn = 1;
+    public const uint FrameRateLimitId = 0x10835002;   // FRL_FPS_ID, "Max Frame Rate" (0 = off)
+    public const uint GsyncModeId = 0x1194F158;        // VRR_MODE_ID: 0 off, 1 full screen only, 2 full screen and windowed
 
     public static readonly (uint Id, uint Value)[] Recommended =
     [
@@ -107,7 +109,52 @@ internal static class Nvidia
             driver = true, profile = name, found = profile != IntPtr.Zero,
             settings = profile == IntPtr.Zero ? [] : Recommended.Select(r => s.Raw(profile, r.Id)).ToArray(),
             global = global == IntPtr.Zero ? null : s.Raw(global, PowerManagementId),
+            frameLimit = profile == IntPtr.Zero ? null : s.Raw(profile, FrameRateLimitId),
+            gsyncGlobal = global == IntPtr.Zero ? null : s.Raw(global, GsyncModeId),
         };
+    }
+
+    /// <summary>
+    /// The FPS cap that fits the main screen: its refresh rate, or 3 below it when G-SYNC is on (stays inside the
+    /// variable refresh range, the lowest-delay way to cap). Fewer frames than the card could draw means less heat.
+    /// </summary>
+    public static uint RecommendedFrameCap(int refreshHz, bool gsync) => (uint)Math.Max(30, gsync ? refreshHz - 3 : refreshHz);
+
+    public static bool GsyncOn()
+    {
+        using var s = DrsSession.Open();
+        var global = s?.GlobalProfile() ?? IntPtr.Zero;
+        return global != IntPtr.Zero && s!.Get(global, GsyncModeId) is { Value: > 0 };
+    }
+
+    /// <summary>Rocket League's current frame cap in the driver: 0 when none is set.</summary>
+    public static uint ReadFrameCap()
+    {
+        using var s = DrsSession.Open();
+        if (s is null) return 0;
+        var (profile, _) = s.FindGameProfile(create: false);
+        return profile == IntPtr.Zero ? 0 : s.Get(profile, FrameRateLimitId)?.Value ?? 0;
+    }
+
+    /// <summary>Sets Rocket League's frame cap and returns what was there (null: nothing of its own), for undo.</summary>
+    public static SettingValue? ApplyFrameCap(uint fps)
+    {
+        using var s = DrsSession.Open() ?? throw new NvapiException("NVIDIA driver not found");
+        var (profile, _) = s.FindGameProfile(create: true);
+        var before = s.Get(profile, FrameRateLimitId);
+        s.Set(profile, FrameRateLimitId, fps);
+        s.Save();
+        return before is { UserSet: true } ? before : null;
+    }
+
+    public static void RestoreFrameCap(SettingValue? before)
+    {
+        using var s = DrsSession.Open() ?? throw new NvapiException("NVIDIA driver not found");
+        var (profile, _) = s.FindGameProfile(create: false);
+        if (profile == IntPtr.Zero) return;
+        if (before is not null) s.Set(profile, FrameRateLimitId, before.Value);
+        else s.RestoreDefault(profile, FrameRateLimitId);
+        s.Save();
     }
 
     /// <summary>Power management mode of the global profile: what every app without its own profile gets, the desktop included.</summary>
@@ -159,6 +206,21 @@ internal static class Nvidia
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int CreateProfileFn(IntPtr session, IntPtr profileInfo, out IntPtr profile);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int CreateAppFn(IntPtr session, IntPtr profile, IntPtr application);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int GetProfileFn(IntPtr session, out IntPtr profile);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int SettingNameFn(uint settingId, IntPtr name);
+
+    /// <summary>The driver's own name for a setting id (NvAPI_DRS_GetSettingNameFromId), to confirm an id before using it.</summary>
+    public static string? SettingName(uint id)
+    {
+        using var s = DrsSession.Open();
+        if (s is null) return null;
+        var buf = Marshal.AllocHGlobal(UnicodeBytes);
+        try
+        {
+            Marshal.Copy(new byte[UnicodeBytes], 0, buf, UnicodeBytes);
+            return Fn<SettingNameFn>(0xD61CBE6E)(id, buf) == Ok ? ReadUnicode(buf, 0) : null;
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
 
     private static T Fn<T>(uint id) where T : Delegate
     {

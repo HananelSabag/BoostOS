@@ -73,7 +73,13 @@ internal static class PowerCheck
         if (facts.IsLaptop)
         {
             var app = MakerApp(facts.Machine);
-            if (app == "Gigabyte Control Center" && !GigabyteControlCenterInstalled())
+            if (ClevoControlCenterInstalled())
+                // Many Gigabyte G5 and other laptops are Clevo-built and ship Clevo's Control Center 3.0 (Microsoft Store).
+                // Its mode lives in the laptop's controller, so BoostOS can say what to choose but not read it.
+                checks.Add(new("Control Center 3.0", L("מותקן", "Installed"), Info,
+                    L("זו התוכנה של הלפטופ למאווררים ולביצועים. למשחק: מצב Performance, ומאווררים על Maximum (או Custom עם עקומה גבוהה). המצב לא נקרא אוטומטית, אז כדאי לוודא לפני משחק.",
+                      "This is the laptop's own app for fans and performance. For play: Performance mode, and fans on Maximum (or Custom with a higher curve). BoostOS can't read the mode, so check it before playing.")));
+            else if (app == "Gigabyte Control Center" && !GigabyteControlCenterInstalled())
                 checks.Add(new(L("Gigabyte Control Center", "Gigabyte Control Center"), L("לא מותקן", "Not installed"), Warn,
                     L("בלי Control Center הלפטופ נשאר על פרופיל המאווררים הרגיל (Normal) ועל הספק הבסיס של הכרטיס. התקן אותו מדף התמיכה של Gigabyte לדגם שלך, ואז בחר מאווררים: Gaming, ובהגדרות הכרטיס: NVIDIA Dynamic Boost. זה השינוי הכי משמעותי לחום.",
                       "Without Control Center the laptop stays on the Normal fan profile and the GPU's base power. Install it from Gigabyte's support page for your model, then choose Fan: Gaming and GPU: NVIDIA Dynamic Boost. It's the biggest single change for heat.")));
@@ -103,6 +109,21 @@ internal static class PowerCheck
         };
     }
 
+    /// <summary>Clevo's Control Center 3.0: a Microsoft Store package, plus its controller service.</summary>
+    private static bool ClevoControlCenterInstalled()
+    {
+        var packages = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Packages");
+        try
+        {
+            if (Directory.Exists(packages) && Directory.EnumerateDirectories(packages, "CLEVOCO.ControlCenter*").Any()) return true;
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        var running = System.Diagnostics.Process.GetProcessesByName("ControlCenter30");
+        foreach (var p in running) p.Dispose();
+        return running.Length > 0;
+    }
+
     /// <summary>Gigabyte's laptop app, found by its uninstall entry or a running copy.</summary>
     private static bool GigabyteControlCenterInstalled()
     {
@@ -115,8 +136,9 @@ internal static class PowerCheck
                 {
                     using var app = key.OpenSubKey(name);
                     var display = app?.GetValue("DisplayName") as string ?? "";
+                    var publisher = (app?.GetValue("Publisher") as string ?? "").Replace("-", "");
                     if (display.Contains("Control Center", StringComparison.OrdinalIgnoreCase)
-                        && (app?.GetValue("Publisher") as string ?? "").Contains("GIGABYTE", StringComparison.OrdinalIgnoreCase)) return true;
+                        && publisher.Contains("GIGABYTE", StringComparison.OrdinalIgnoreCase)) return true;
                 }
             }
         var running = System.Diagnostics.Process.GetProcessesByName("GCC");

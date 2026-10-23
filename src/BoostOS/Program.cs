@@ -71,7 +71,12 @@ internal static class Program
 
         if (args is ["--nvidia-json", var nvPath, ..])
         {
-            File.WriteAllText(nvPath, JsonSerializer.Serialize(Nvidia.Dump(), Json));
+            File.WriteAllText(nvPath, JsonSerializer.Serialize(new
+            {
+                dump = Nvidia.Dump(),
+                names = new[] { Nvidia.PowerManagementId, Nvidia.PrerenderLimitId, Nvidia.FrameRateLimitId, Nvidia.GsyncModeId }
+                    .ToDictionary(id => $"0x{id:X8}", id => Nvidia.SettingName(id)),
+            }, Json));
             return 0;
         }
 

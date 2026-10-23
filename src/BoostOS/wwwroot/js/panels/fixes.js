@@ -9,7 +9,7 @@ let ctx;
 let root;
 
 // The order of the list inside each group: game first, then Windows, then the network.
-const ORDER = ['nvidia-global-power', 'nvidia-profile', 'rl-gpu-pref', 'rl-vsync', 'power-plan', 'power-overlay', 'windows-game-mode',
+const ORDER = ['nvidia-fps-cap', 'nvidia-global-power', 'nvidia-profile', 'rl-gpu-pref', 'rl-vsync', 'power-plan', 'power-overlay', 'windows-game-mode',
   'windowed-opt', 'game-dvr-history', 'wifi-power-ac', 'wifi-roaming'];
 
 const panel = {
@@ -81,7 +81,7 @@ function rows() {
     const check = checks.find(c => c.fix.id === id);
     const issue = check && (check.status === 'warn' || check.status === 'bad');
     return {
-      id, check, admin: check?.fix.needsAdmin ?? ['nvidia-global-power', 'nvidia-profile', 'wifi-roaming'].includes(id),
+      id, check, admin: check?.fix.needsAdmin ?? ['nvidia-fps-cap', 'nvidia-global-power', 'nvidia-profile', 'wifi-roaming'].includes(id),
       applied: appliedIds.has(id),
       state: issue ? 'needed' : check ? 'good' : 'na',
     };
