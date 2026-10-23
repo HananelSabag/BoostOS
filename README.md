@@ -62,6 +62,7 @@ Everything it changes is a Windows setting, a driver profile or a game's setting
 | NVIDIA profile | Rocket League profile: *Prefer maximum performance* + *Low Latency Mode: On* (via NVAPI) | ✓ |
 | Rocket League GPU | Graphics preference for `RocketLeague.exe` → *High performance* | |
 | VSync | `UseVsync=False` in `TASystemSettings.ini` (backed up first) | |
+| BoostOS power plan | A copy of Balanced: on the charger aggressive CPU boost and no PCI Express / USB / Wi-Fi power saving; on battery boost off and every saving on | |
 | Power mode | Windows power mode → *Best performance* | |
 | Windows Game Mode | Game Mode → on | |
 | Windowed optimizations | *Optimizations for windowed games* → on | |

@@ -37,7 +37,9 @@ internal static class PowerCheck
         if (scheme is { } s)
         {
             var name = FriendlyName(s);
-            if (s == PowerSaver)
+            if (s == Tuning.PowerPlan.Scheme)
+                checks.Add(new(plan, L("BoostOS · ביצועים מלאים במטען, חיסכון בסוללה", "BoostOS · full performance plugged in, saving on battery"), Ok, null, Tuning.Fixes.Ref("power-plan")));
+            else if (s == PowerSaver)
                 checks.Add(new(plan, name, Bad, L("תוכנית חיסכון בחשמל חונקת את המעבד. עבור ל-Balanced עם מצב Best performance.", "Power saver starves the CPU. Switch to Balanced with Best performance.")));
             else if (s == HighPerformance || s == Ultimate)
                 checks.Add(new(plan, name, Ok));
@@ -55,14 +57,30 @@ internal static class PowerCheck
             }
             else
                 checks.Add(new(plan, name, Info));
+
+            // Balanced keeps PCI Express, USB and Wi-Fi power saving on even on the charger: small delays for nothing.
+            if (s == Balanced)
+            {
+                var (aspmAc, _) = ReadSetting(new("501a4d13-42af-4429-9fd1-a8218c268e20"), new("ee12f906-d277-404b-b6da-e5fa1a576df5"));
+                checks.Add(new(L("תוכנית חשמל למשחק", "Gaming power plan"),
+                    aspmAc is > 0 ? L("חיסכון בחשמל פעיל גם במטען", "Power saving stays on when plugged in") : L("לא מוגדרת", "Not set"), Warn,
+                    L("תוכנית BoostOS: במטען המעבד מאיץ במלואו, ובלי חיסכון בחשמל ל-PCI Express, ל-USB ול-Wi-Fi (חיסכון שמוסיף השהיות קטנות). על סוללה ההאצה כבויה והחיסכון פעיל, ללפטופ קריר ולסוללה ארוכה. אפשר להחזיר בכל רגע.",
+                      "The BoostOS plan: on the charger the CPU boosts fully, with no power saving on PCI Express, USB and Wi-Fi (savings that add small delays). On battery boost is off and every saving is on, for a cool laptop and a long battery. Can be undone any time."),
+                    Tuning.Fixes.Ref("power-plan")));
+            }
         }
 
         if (facts.IsLaptop)
         {
             var app = MakerApp(facts.Machine);
-            checks.Add(new(L("מצב ביצועים של היצרן", "Maker's performance mode"), L("לא נקרא אוטומטית", "Can't be read automatically"), Info,
-                L($"ללפטופ יש מצב ביצועים משלו ({app}: Turbo / Performance). הוא משפיע על המאווררים ועל ההספק של המעבד והכרטיס יותר מכל הגדרה של ווינדוס. למשחק מומלץ Turbo או Performance.",
-                  $"The laptop has its own performance mode ({app}: Turbo / Performance). It affects fans and CPU/GPU power more than any Windows setting. Use Turbo or Performance for gaming.")));
+            if (app == "Gigabyte Control Center" && !GigabyteControlCenterInstalled())
+                checks.Add(new(L("Gigabyte Control Center", "Gigabyte Control Center"), L("לא מותקן", "Not installed"), Warn,
+                    L("בלי Control Center הלפטופ נשאר על פרופיל המאווררים הרגיל (Normal) ועל הספק הבסיס של הכרטיס. התקן אותו מדף התמיכה של Gigabyte לדגם שלך, ואז בחר מאווררים: Gaming, ובהגדרות הכרטיס: NVIDIA Dynamic Boost. זה השינוי הכי משמעותי לחום.",
+                      "Without Control Center the laptop stays on the Normal fan profile and the GPU's base power. Install it from Gigabyte's support page for your model, then choose Fan: Gaming and GPU: NVIDIA Dynamic Boost. It's the biggest single change for heat.")));
+            else
+                checks.Add(new(L("מצב ביצועים של היצרן", "Maker's performance mode"), L("לא נקרא אוטומטית", "Can't be read automatically"), Info,
+                    L($"ללפטופ יש מצב ביצועים משלו ({app}: Gaming / Turbo / Performance). הוא משפיע על המאווררים ועל ההספק של המעבד והכרטיס יותר מכל הגדרה של ווינדוס. למשחק מומלץ Gaming או Turbo.",
+                      $"The laptop has its own performance mode ({app}: Gaming / Turbo / Performance). It affects fans and CPU/GPU power more than any Windows setting. Use Gaming or Turbo for play.")));
         }
 
         return new Section("power", L("חשמל וביצועים", "Power"), "bolt", checks);
@@ -83,6 +101,27 @@ internal static class PowerCheck
             _ when m.Contains("RAZER") => "Razer Synapse",
             _ => L("תוכנת היצרן", "the maker's app"),
         };
+    }
+
+    /// <summary>Gigabyte's laptop app, found by its uninstall entry or a running copy.</summary>
+    private static bool GigabyteControlCenterInstalled()
+    {
+        foreach (var root in new[] { Microsoft.Win32.Registry.LocalMachine, Microsoft.Win32.Registry.CurrentUser })
+            foreach (var path in new[] { @"Software\Microsoft\Windows\CurrentVersion\Uninstall", @"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" })
+            {
+                using var key = root.OpenSubKey(path);
+                if (key is null) continue;
+                foreach (var name in key.GetSubKeyNames())
+                {
+                    using var app = key.OpenSubKey(name);
+                    var display = app?.GetValue("DisplayName") as string ?? "";
+                    if (display.Contains("Control Center", StringComparison.OrdinalIgnoreCase)
+                        && (app?.GetValue("Publisher") as string ?? "").Contains("GIGABYTE", StringComparison.OrdinalIgnoreCase)) return true;
+                }
+            }
+        var running = System.Diagnostics.Process.GetProcessesByName("GCC");
+        foreach (var p in running) p.Dispose();
+        return running.Length > 0;
     }
 
     public static Guid? ActiveScheme()

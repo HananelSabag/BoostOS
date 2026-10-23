@@ -13,7 +13,8 @@ const panel = {
 
   build(el) {
     root = el;
-    root.innerHTML = `<div class="ses"><nav class="ses-list" id="ses-list" aria-label="${t('ses.list')}"></nav><article class="ses-detail" id="ses-detail"></article></div>`;
+    root.innerHTML = `<div class="ses-wrap"><section class="card ses-sum" id="ses-sum" data-nav tabindex="0"></section>
+      <div class="ses"><nav class="ses-list" id="ses-list" aria-label="${t('ses.list')}"></nav><article class="ses-detail" id="ses-detail"></article></div></div>`;
     root.addEventListener('focusin', e => {
       const item = e.target.closest('[data-ses]');
       if (item && Number(item.dataset.ses) !== selected) {
@@ -38,6 +39,7 @@ const panel = {
     const box = $('#ses-list', root);
     if (box.dataset.key === key) return;
     box.dataset.key = key;
+    renderSummary(list);
     const focused = document.activeElement?.closest?.('[data-ses]')?.dataset.ses;
     box.innerHTML = list.length ? list.map((m, i) => {
       const game = gameOf(m);
@@ -81,11 +83,64 @@ function renderDetail() {
     </header>
     <section class="card ses-notes" data-nav tabindex="0">
       <h4>${t('ses.learned')}</h4>
-      <ul>${notes.map(([s, text, tip]) => `<li class="s-${s}"><span class="dot"></span><span>${esc(text)}${tip ? `<small>${esc(tip)}</small>` : ''}</span></li>`).join('')}</ul>
+      <ul>${notes.map(([s, text, tip], i) => `<li class="s-${s}"><span class="dot"></span><span>${esc(text)}${tip && i === 0 && s !== 'ok' ? `<small>${esc(tip)}</small>` : ''}</span></li>`).join('')}</ul>
     </section>
     <section class="ses-metrics" data-nav tabindex="0">${metrics(m, prev)}</section>
     ${charts(m)}
     ${background(m)}`;
+}
+
+// ---- All sessions at once ----
+
+const avg = xs => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+const of = (list, f) => list.map(f).filter(finite);
+
+/** The pattern across every session: the one thing to fix first, what is fine, and Game Mode on vs off. */
+function renderSummary(list) {
+  const box = $('#ses-sum', root);
+  if (list.length < 2) { box.hidden = true; return; }
+  box.hidden = false;
+  const minutes = of(list, m => m.minutes).reduce((a, b) => a + b, 0);
+  const thermal = avg(of(list, m => m.gpuThermalLimitedPct));
+  const peak = Math.max(...of(list, m => m.gpuTempMax), 0);
+  const hotCount = of(list, m => m.gpuTempMax).filter(x => x >= 86).length;
+  const routers = list.map(m => m.router).filter(Boolean);
+  const spikesPerHour = routers.length ? routers.reduce((a, r) => a + r.spikes, 0) / Math.max(1, of(list.filter(m => m.router), m => m.minutes).reduce((a, b) => a + b, 0)) * 60 : null;
+  const routerMs = avg(routers.map(r => r.medianMs).filter(finite));
+  const cpuGhz = avg(of(list, m => m.cpuMhzAvg));
+  const gpuLoad = avg(of(list, m => m.gpuUtil));
+
+  let main;
+  if (thermal != null && thermal >= 15) main = ['bad', t('sum.heat', { pct: Math.round(thermal), peak: Math.round(peak), n: hotCount, total: list.length }), t('sum.heatTip', { load: Math.round(gpuLoad ?? 0) })];
+  else if (spikesPerHour != null && spikesPerHour > 12) main = ['warn', t('sum.wifi', { n: Math.round(spikesPerHour) }), t('ins.wifiTip')];
+  else main = ['ok', t('sum.none'), ''];
+
+  const good = [];
+  if (routerMs != null && (spikesPerHour ?? 0) <= 12) good.push(t('sum.goodWifi', { ms: Math.round(routerMs), n: Math.round(spikesPerHour ?? 0) }));
+  if (cpuGhz != null) good.push(t('sum.goodCpu', { ghz: (cpuGhz / 1000).toFixed(1) }));
+  if (list.some(m => m.background) && !list.some(m => (m.background ?? []).some(a => !SYSTEM.has(a.name) && a.cpuPct >= 3))) good.push(t('sum.goodBg'));
+
+  // Game Mode: compare when both kinds exist, otherwise say what would make the comparison possible.
+  const withGm = list.filter(m => m.gameMode), without = list.filter(m => !m.gameMode);
+  const cmp = withGm.length && without.length
+    ? `<div class="sum-cmp"><b>${t('sum.gmTitle')}</b>${[[t('sum.gmOn'), withGm], [t('sum.gmOff'), without]].map(([label, g]) => `
+        <span><i>${label}</i><bdi>${Math.round(avg(of(g, m => m.gpuThermalLimitedPct)) ?? 0)}%</bdi> ${t('sum.heldShort')} · <bdi>${(avg(g.filter(m => m.router).map(m => m.router.spikes / Math.max(1, m.minutes) * 60)) ?? 0).toFixed(1)}</bdi> ${t('sum.spikesShort')}</span>`).join('')}</div>`
+    : `<p class="note">${t('sum.gmAll', { n: list.length })}</p>`;
+
+  // One bar per session, oldest on the left: how much of it the card spent slowed by heat.
+  const bars = [...list].reverse().map(m => {
+    const v = finite(m.gpuThermalLimitedPct) ? m.gpuThermalLimitedPct : 0;
+    return `<span class="${v >= 40 ? 's-bad' : v >= 15 ? 's-warn' : 's-ok'}" style="--v:${Math.max(4, v)}%" title="${Math.round(v)}%"></span>`;
+  }).join('');
+
+  box.innerHTML = `
+    <div class="sum-head"><h3>${t('sum.title', { n: list.length })}</h3><span>${t('sum.hours', { h: (minutes / 60).toFixed(1) })}</span></div>
+    <div class="sum-body">
+      <div class="sum-main s-${main[0]}"><span class="dot"></span><div><b>${esc(main[1])}</b>${main[2] ? `<small>${esc(main[2])}</small>` : ''}</div></div>
+      <figure class="sum-bars" dir="ltr" aria-label="${esc(t('sum.barsLabel'))}"><div>${bars}</div><figcaption>${t('sum.barsLabel')}</figcaption></figure>
+    </div>
+    ${good.length ? `<p class="sum-good">${icon('check')}${good.map(esc).join(' · ')}</p>` : ''}
+    ${cmp}`;
 }
 
 // ---- What it means ----

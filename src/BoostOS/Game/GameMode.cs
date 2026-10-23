@@ -34,6 +34,10 @@ internal static class GameMode
         new("Teams", ["ms-teams"], null, null),
         new("Copilot", ["Copilot"], null, null),
         new("Adobe Creative Cloud", ["Creative Cloud", "Adobe Desktop Service", "CCXProcess", "AdobeIPCBroker"], null, null),
+        // Seen in recorded sessions: tray apps that keep polling during a match. DualSense Edge profiles live on the
+        // controller itself, so its companion app isn't needed to play; Intel's panel comes back silently afterwards.
+        new("PlayStation Accessories", ["PlayStationAccessories"], null, null),
+        new("Intel Graphics Software", ["IntelGraphicsSoftware"], null, "-s"),
     ];
 
     public sealed class Snapshot

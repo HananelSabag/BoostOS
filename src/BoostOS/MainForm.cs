@@ -90,9 +90,11 @@ internal sealed class MainForm : Form
         core.Settings.AreDevToolsEnabled = false;
 #endif
         core.SetVirtualHostNameToFolderMapping(Host, Path.Combine(AppContext.BaseDirectory, "wwwroot"), CoreWebView2HostResourceAccessKind.Deny);
-        // Game pictures copied from the launchers' own caches. Images only: no script can read them cross-origin.
+        // Game pictures copied from the launchers' own caches, answered here (a folder mapping on a second host
+        // stopped serving images after a WebView2 update). Only plain file names inside the art folder are served.
         Directory.CreateDirectory(GameLibrary.ArtDir);
-        core.SetVirtualHostNameToFolderMapping(GameLibrary.ArtHost, GameLibrary.ArtDir, CoreWebView2HostResourceAccessKind.DenyCors);
+        core.AddWebResourceRequestedFilter($"https://{GameLibrary.ArtHost}/*", CoreWebView2WebResourceContext.All);
+        core.WebResourceRequested += OnArtRequested;
         core.WebMessageReceived += OnMessage;
 
         // A previous run may have ended before it could restore. Never undo a session still in progress.
@@ -106,6 +108,32 @@ internal sealed class MainForm : Form
 
         FitZoom();
         SizeChanged += (_, _) => FitZoom();
+    }
+
+    private void OnArtRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
+    {
+        if (web.CoreWebView2 is not { } core || !Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var uri)
+            || !uri.Host.Equals(GameLibrary.ArtHost, StringComparison.OrdinalIgnoreCase)) return;
+        var name = Uri.UnescapeDataString(uri.AbsolutePath.TrimStart('/'));
+        var path = Path.Combine(GameLibrary.ArtDir, name);
+        if (name.Length == 0 || name.IndexOfAny(['/', '\\', ':']) >= 0 || name.Contains("..") || !File.Exists(path))
+        {
+            e.Response = core.Environment.CreateWebResourceResponse(null, 404, "Not Found", "");
+            return;
+        }
+        var type = Path.GetExtension(name).ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".webp" => "image/webp",
+            _ => "application/octet-stream",
+        };
+        try
+        {
+            e.Response = core.Environment.CreateWebResourceResponse(new MemoryStream(File.ReadAllBytes(path)), 200, "OK",
+                $"Content-Type: {type}\r\nCache-Control: max-age=86400\r\nAccess-Control-Allow-Origin: https://{Host}");
+        }
+        catch (IOException) { e.Response = core.Environment.CreateWebResourceResponse(null, 503, "Busy", ""); }
     }
 
     /// <summary>

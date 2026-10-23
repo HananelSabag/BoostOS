@@ -51,6 +51,20 @@ public class LibraryAndProbeTests
     }
 
     [Fact]
+    public void Power_plan_saves_power_only_on_battery()
+    {
+        // PCI Express link state, USB suspend and Wi-Fi saving: off on the charger, on when running on battery.
+        foreach (var setting in new[] { "ee12f906-d277-404b-b6da-e5fa1a576df5", "48e6b7a6-50f5-4782-a5d4-53bb8f07e226", "12bbebe6-58d6-4636-95bb-3217ef867c1a" })
+        {
+            var v = PowerPlan.Values.Single(x => x.Setting == setting);
+            Assert.Equal(0u, v.Ac);
+            Assert.True(v.Dc > 0);
+        }
+        var boost = PowerPlan.Values.Single(x => x.Setting == "be337238-0d82-4146-a960-4f3749d470c7");
+        Assert.Equal((2u, 0u), (boost.Ac, boost.Dc)); // aggressive boost plugged in, none on battery
+    }
+
+    [Fact]
     public void Video_settings_map_to_the_games_own_keys()
     {
         Assert.Equal([("Fullscreen", "True"), ("Borderless", "False")], RlVideo.Keys("display", "fullscreen").ToArray());

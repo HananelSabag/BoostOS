@@ -945,8 +945,29 @@ main { position: relative; height: 100%; z-index: 1; }
 .verdict li { display: grid; grid-template-columns: 10px 1fr; gap: 12px; align-items: baseline; color: var(--ink-dim); }
 .verdict p { margin: 0; color: var(--ink-dim); max-width: 60ch; }
 
-/* Sessions: the game data screen */
-.ses { display: grid; grid-template-columns: clamp(250px, 19vw, 320px) minmax(0, 1fr); gap: 22px; height: 100%; }
+/* Sessions: the game data screen. A summary of every session on top, then one session at a time. */
+.ses-wrap { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 14px; height: 100%; }
+.ses-sum { display: grid; gap: 10px; padding: 16px 20px; }
+.ses-sum .sum-head { display: flex; align-items: baseline; gap: 14px; }
+.ses-sum h3 { margin: 0; font: 700 1.9rem/1 var(--display); }
+.ses-sum .sum-head span { color: var(--ink-dim); }
+.sum-body { display: grid; grid-template-columns: minmax(0, 1fr) clamp(180px, 22vw, 340px); gap: 22px; align-items: center; }
+.sum-main { display: grid; grid-template-columns: 12px 1fr; gap: 12px; align-items: baseline; }
+.sum-main .dot { width: 12px; height: 12px; }
+.sum-main b { font-size: 1.12rem; font-weight: 700; }
+.sum-main small { display: block; margin-top: 4px; color: var(--ink-dim); font-size: 0.95rem; }
+.sum-bars { margin: 0; display: grid; gap: 6px; }
+.sum-bars > div { display: flex; align-items: flex-end; gap: 4px; height: 56px; padding: 0 2px; border-bottom: 1px solid var(--line-bright); }
+.sum-bars span { flex: 1; max-width: 22px; height: var(--v); border-radius: 4px 4px 0 0; background: var(--ok); }
+.sum-bars span.s-warn { background: var(--warn); }
+.sum-bars span.s-bad { background: var(--bad); }
+.sum-bars figcaption { color: var(--ink-faint); font-size: 0.8rem; text-align: center; }
+.sum-good { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ok); font-weight: 600; font-size: 0.95rem; }
+.sum-good .ic { width: 16px; height: 16px; stroke-width: 2.6; }
+.sum-cmp { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 22px; font-size: 0.95rem; color: var(--ink-dim); }
+.sum-cmp b { color: var(--ink); }
+.sum-cmp i { font-style: normal; font-weight: 700; color: var(--ink); margin-inline-end: 6px; }
+.ses { display: grid; grid-template-columns: clamp(250px, 19vw, 320px) minmax(0, 1fr); gap: 22px; min-height: 0; }
 .ses-list { display: grid; align-content: start; gap: 8px; min-height: 0; overflow-y: auto; padding: 4px; }
 .ses-item {
   display: grid;

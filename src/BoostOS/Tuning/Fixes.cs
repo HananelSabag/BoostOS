@@ -39,6 +39,8 @@ internal static class Fixes
             },
             before => { if (Guid.TryParse(before, out var g)) Native.PowerSetActiveOverlayScheme(g); }),
 
+        ["power-plan"] = new(false, PowerPlan.Apply, PowerPlan.Undo),
+
         ["game-dvr-history"] = new(false,
             () => SetDword(GameDvrKey, "HistoricalCaptureEnabled", 0),
             before => RestoreDword(GameDvrKey, "HistoricalCaptureEnabled", before)),

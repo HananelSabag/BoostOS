@@ -75,6 +75,16 @@ internal static class Program
             return 0;
         }
 
+        // Applies or undoes fixes from a script (admin fixes still ask for approval once).
+        if (args is [("--fix" or "--undo") and var fixMode, var fixIds, ..])
+        {
+            I18n.English = true;
+            var outcome = Fixes.Run(fixIds.Split(',', StringSplitOptions.RemoveEmptyEntries), undo: fixMode == "--undo");
+            Console.WriteLine(JsonSerializer.Serialize(outcome, Json));
+            if (args.Length > 2) File.WriteAllText(args[2], JsonSerializer.Serialize(outcome, Json));
+            return outcome.Failed.Count == 0 ? 0 : 1;
+        }
+
         if (args is [("--elevated-fix" or "--elevated-undo") and var mode, var ids, var outPath, ..])
         {
             I18n.English = args.Length > 3 && args[3] == "en";

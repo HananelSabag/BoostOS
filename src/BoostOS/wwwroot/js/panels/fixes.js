@@ -9,7 +9,7 @@ let ctx;
 let root;
 
 // The order of the list inside each group: game first, then Windows, then the network.
-const ORDER = ['nvidia-global-power', 'nvidia-profile', 'rl-gpu-pref', 'rl-vsync', 'power-overlay', 'windows-game-mode',
+const ORDER = ['nvidia-global-power', 'nvidia-profile', 'rl-gpu-pref', 'rl-vsync', 'power-plan', 'power-overlay', 'windows-game-mode',
   'windowed-opt', 'game-dvr-history', 'wifi-power-ac', 'wifi-roaming'];
 
 const panel = {
