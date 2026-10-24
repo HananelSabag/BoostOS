@@ -47,7 +47,28 @@ internal static class GameMode
         public Guid? Overlay { get; set; }
         public string? WifiScanStoppedOn { get; set; }
         public List<StepResult> Steps { get; set; } = [];
+        /// <summary>Background processes put into efficiency mode, with the priority each one had.</summary>
+        public List<BackgroundThrottle.Throttled> Throttled { get; set; } = [];
     }
+
+    private static readonly Dictionary<string, string> AppNames = new()
+    {
+        ["chrome"] = "Chrome", ["msedge"] = "Edge", ["firefox"] = "Firefox", ["brave"] = "Brave", ["opera"] = "Opera", ["opera_gx"] = "Opera GX",
+        ["chatgpt"] = "ChatGPT", ["claude"] = "Claude", ["codex"] = "Codex", ["node"] = "Node.js", ["java"] = "Java", ["javaw"] = "Java",
+        ["qemu-system-x86_64"] = "Claude VM", ["qemu-system-x86_64-headless"] = "Claude VM", ["code"] = "VS Code", ["cursor"] = "Cursor",
+        ["studio64"] = "Android Studio", ["githubdesktop"] = "GitHub Desktop", ["whatsapp"] = "WhatsApp", ["whatsapp.root"] = "WhatsApp",
+        ["telegram"] = "Telegram", ["slack"] = "Slack", ["ms-teams"] = "Teams", ["teams"] = "Teams", ["zoom"] = "Zoom",
+        ["epicwebhelper"] = "Epic Games Launcher", ["winword"] = "Word", ["excel"] = "Excel", ["outlook"] = "Outlook", ["olk"] = "Outlook",
+    };
+
+    private static string AppList(IEnumerable<string> processNames)
+    {
+        var names = processNames.Select(n => AppNames.GetValueOrDefault(n, n)).Distinct().ToList();
+        return string.Join(", ", names.Take(6)) + (names.Count > 6 ? L($" ועוד {names.Count - 6}", $" and {names.Count - 6} more") : "");
+    }
+
+    private static List<string> RunningTargets(IReadOnlySet<string> game) =>
+        ProcessInfo.Snapshot().Where(e => BackgroundThrottle.IsTarget(e.Name, game)).Select(e => e.Name).Distinct().ToList();
 
     public sealed record Relaunch(string Label, string Exe, string Args);
 
@@ -86,7 +107,15 @@ internal static class GameMode
                   $"{string.Join(", ", running)}. They sync, update and pop notifications mid-match."), true)
             : new(L("סגירת תוכנות רקע", "Close background apps"), L("אין כרגע מה לסגור.", "Nothing to close right now."), false));
 
-        if (PowerCheck.ActiveScheme() == PowerCheck.Balanced)
+        var heavy = RunningTargets(new HashSet<string>());
+        if (heavy.Count > 0)
+            plan.Add(new(L("Efficiency mode לתוכנות כבדות", "Efficiency mode for heavy apps"),
+                L($"{AppList(heavy)}: ממשיכות לרוץ, אבל בעדיפות הכי נמוכה במעבד, כמו העלה ב-Task Manager.",
+                  $"{AppList(heavy)}: they keep running, but at the lowest CPU priority, like the leaf in Task Manager."), true));
+
+        if (Tuning.PowerPlan.IsActive)
+            plan.Add(new(L("חשמל", "Power"), L("תוכנית BoostOS כבר פעילה: ביצועים מלאים במטען.", "The BoostOS plan is already on: full performance on the charger."), true));
+        else if (PowerCheck.ActiveScheme() == PowerCheck.Balanced)
             plan.Add(PowerCheck.Overlay() == PowerCheck.OverlayBestPerformance
                 ? new(L("מצב חשמל Best performance", "Best performance power mode"), L("כבר מוגדר.", "Already set."), false)
                 : new(L("מצב חשמל Best performance", "Best performance power mode"),
@@ -110,12 +139,30 @@ internal static class GameMode
     }
 
     /// <param name="store">The store of the game about to start: its launcher must stay open.</param>
-    public static GameModeStatus Apply(bool? periodicWifiSpikes, string? store = null)
+    /// <param name="gameProcesses">The game's own process names, never throttled.</param>
+    public static GameModeStatus Apply(bool? periodicWifiSpikes, string? store = null, IEnumerable<string>? gameProcesses = null)
     {
-        lock (StateGate) return ApplyCore(periodicWifiSpikes, store);
+        lock (StateGate) return ApplyCore(periodicWifiSpikes, store, gameProcesses ?? []);
     }
 
-    private static GameModeStatus ApplyCore(bool? periodicWifiSpikes, string? store)
+    /// <summary>
+    /// While a game runs: apps opened since Game Mode started (a new browser tab is a new process) go into
+    /// efficiency mode too. Cheap, and called about once a minute.
+    /// </summary>
+    public static void KeepQuiet(IEnumerable<string> gameProcesses)
+    {
+        lock (StateGate)
+        {
+            var snap = Load();
+            if (snap is null) return;
+            var added = BackgroundThrottle.Apply(gameProcesses, snap.Throttled);
+            if (added.Count == 0) return;
+            snap.Throttled.AddRange(added);
+            Save(snap);
+        }
+    }
+
+    private static GameModeStatus ApplyCore(bool? periodicWifiSpikes, string? store, IEnumerable<string> gameProcesses)
     {
         if (IsActive) return Status(periodicWifiSpikes, store);
 
@@ -140,7 +187,24 @@ internal static class GameMode
             Save(snap);
         }
 
-        if (PowerCheck.ActiveScheme() == PowerCheck.Balanced && PowerCheck.Overlay() is { } overlay)
+        try
+        {
+            var throttled = BackgroundThrottle.Apply(gameProcesses, []);
+            snap.Throttled.AddRange(throttled);
+            if (throttled.Count > 0)
+                snap.Steps.Add(new(L("Efficiency mode", "Efficiency mode"),
+                    L($"{throttled.Count} תהליכים ברקע ירדו לעדיפות הכי נמוכה: {AppList(throttled.Select(t => t.Name))}",
+                      $"{throttled.Count} background processes dropped to the lowest priority: {AppList(throttled.Select(t => t.Name))}"), "done"));
+        }
+        catch (Exception ex)
+        {
+            snap.Steps.Add(new(L("Efficiency mode", "Efficiency mode"), ex.Message, "failed"));
+        }
+        Save(snap);
+
+        if (Tuning.PowerPlan.IsActive)
+            snap.Steps.Add(new(L("חשמל", "Power"), L("תוכנית BoostOS: ביצועים מלאים", "BoostOS plan: full performance"), "done"));
+        else if (PowerCheck.ActiveScheme() == PowerCheck.Balanced && PowerCheck.Overlay() is { } overlay)
         {
             if (overlay == PowerCheck.OverlayBestPerformance)
                 snap.Steps.Add(new(L("מצב חשמל", "Power mode"), L("כבר על Best performance", "Already on Best performance"), "skipped"));
@@ -174,6 +238,15 @@ internal static class GameMode
                 },
                 overlay => Native.PowerSetActiveOverlayScheme(overlay) == 0,
                 nic => Shell.Run("netsh", $"wlan set autoconfig enabled=yes interface=\"{nic}\"") is not null);
+
+            // Best effort: processes that exited meanwhile need nothing back.
+            if (snap.Throttled.Count > 0)
+            {
+                try { BackgroundThrottle.Restore(snap.Throttled); } catch { }
+                snap.Steps.Add(new(L("Efficiency mode", "Efficiency mode"),
+                    L($"{snap.Throttled.Count} תהליכים חזרו לעדיפות הרגילה", $"{snap.Throttled.Count} processes back to their usual priority"), "done"));
+                snap.Throttled.Clear();
+            }
 
             if (pending) Save(snap);
             else File.Delete(StatePath);

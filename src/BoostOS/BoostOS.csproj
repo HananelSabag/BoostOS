@@ -9,7 +9,7 @@
     <AssemblyName>BoostOS</AssemblyName>
     <RootNamespace>BoostOS</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.4.2</Version>
+    <Version>0.4.3</Version>
     <Product>BoostOS</Product>
     <Authors>Hananel Sabag</Authors>
     <Description>A console-style home screen for Windows that gets your PC ready for Rocket League.</Description>

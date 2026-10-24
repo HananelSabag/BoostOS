@@ -17,6 +17,7 @@ const TOGGLES = [
   ['rumble', 'settings.rumble', 'settings.rumbleSub'],
   ['startFullscreen', 'settings.fullscreen', 'settings.fullscreenSub'],
   ['trackMatches', 'settings.track', 'settings.trackSub'],
+  ['backgroundRecorder', 'settings.recorder', 'settings.recorderSub'],
 ];
 
 const screen = {

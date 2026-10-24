@@ -20,7 +20,7 @@ const ACCENT = { home: 'play', diag: 'diag', pad: 'diag', keys: 'diag', mouse: '
 const TESTS = ['pad', 'keys', 'mouse'];
 
 const app = {
-  settings: { language: 'he', sounds: true, rumble: true, startFullscreen: true, trackMatches: true, gameModeOnPlay: true, favoriteGame: null },
+  settings: { language: 'he', sounds: true, rumble: true, startFullscreen: true, trackMatches: true, gameModeOnPlay: true, backgroundRecorder: true, favoriteGame: null },
   report: null,
   scanning: false,
   scanError: null,

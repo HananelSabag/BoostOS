@@ -1,4 +1,4 @@
-﻿# BoostOS
+# BoostOS
 
 **A console-style home screen for Windows that gets your PC ready to play, and puts it back afterwards.**
 
@@ -25,7 +25,8 @@ back by itself and you get a short report on how the PC held up.
 |---|---|
 | **Favourite game** | The big first tile, with the game's real art (from the launchers' own local caches, nothing is downloaded). â–³ / Y on any game puts it first. |
 | **Games** | A folder that unfolds a row of every installed game underneath it: Epic Games and Steam, found from the launchers' files. Up returns to the rail, Back closes the row. |
-| **Game Mode** | One pill next to the power button. Focus shows what it will do; a press switches it. It closes background sync, updaters and phone extras (OneDrive, Steam unless the game is on Steam, Phone Link, Widgets, Teams, Copilot, Adobe) and sets *Best performance*. It turns on by itself when a game starts from BoostOS and is restored when the game closes, even after a crash. |
+| **Game Mode** | One pill next to the power button. Focus shows what it will do; a press switches it. It closes background sync, updaters and phone extras (OneDrive, Steam unless the game is on Steam, Phone Link, Widgets, Teams, Copilot, Adobe) and sets *Best performance*. Heavy apps that stay open (browsers, chat and AI apps, editors) go into Windows' efficiency mode instead of being closed. It turns on by itself when a game starts and is restored when the game closes, even after a crash. |
+| **Background recorder** | A small part with no window that starts with Windows (about 50 MB, ~0.03% CPU). Every game is recorded and gets Game Mode, however it was started, even with BoostOS closed. One copy owns each session, so nothing is recorded twice. |
 | **Diagnostics** | One screen with five tabs, switched with L1/R1 (LB/RB, Q/E): |
 | â†³ Overview | The readiness score and ten areas of the PC. Areas with something to improve open by themselves; the rest fold to one line. |
 | â†³ Fixes | Everything BoostOS can change, grouped into *worth fixing*, *changed by BoostOS* (with Undo), *already good* and *not needed here*. |
@@ -119,6 +120,7 @@ Headless modes, handy for checking a machine:
 BoostOS.exe --scan-json scan.json [en]   # full diagnostics as JSON
 BoostOS.exe --games-json games.json      # installed games, art, running game, Rocket League video settings
 BoostOS.exe --net-json net.json 60       # 60-second network test with every sample
+BoostOS.exe --efficiency-test            # efficiency mode on the heavy background apps for 5 s, then back
 BoostOS.exe --record-json rec.json 40    # a 40-second session recording without a game: checks every probe
 BoostOS.exe --nvidia-json nv.json        # raw NVIDIA profile fields, global profile included
 ```

@@ -10,8 +10,10 @@ public sealed record AppSettings
     public bool Rumble { get; init; } = true;
     public bool StartFullscreen { get; init; } = true;
     public bool TrackMatches { get; init; } = true;
-    /// <summary>Game Mode turns on by itself when a game is started from BoostOS.</summary>
+    /// <summary>Game Mode turns on by itself when a game starts (from BoostOS, or from anywhere while the recorder runs).</summary>
     public bool GameModeOnPlay { get; init; } = true;
+    /// <summary>The background recorder starts with Windows, so every game is recorded however it was started.</summary>
+    public bool BackgroundRecorder { get; init; } = true;
     /// <summary>The game on the big first tile ("epic:Sugar", "steam:730"…). Null: Rocket League, or the first game.</summary>
     public string? FavoriteGame { get; init; }
 

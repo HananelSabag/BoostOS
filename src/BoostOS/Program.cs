@@ -58,6 +58,20 @@ internal static class Program
             return 0;
         }
 
+        // Puts the heavy background apps into efficiency mode for a few seconds and back: checks Game Mode's throttle.
+        if (args is ["--efficiency-test", ..])
+        {
+            var list = Game.BackgroundThrottle.Apply([], []);
+            Console.WriteLine($"throttled {list.Count}: {string.Join(", ", list.Select(t => t.Name).Distinct())}");
+            var idle = list.Count(t => { try { using var p = System.Diagnostics.Process.GetProcessById(t.Pid); return p.PriorityClass == System.Diagnostics.ProcessPriorityClass.Idle; } catch { return false; } });
+            Console.WriteLine($"now idle priority: {idle}");
+            Thread.Sleep(5000);
+            Game.BackgroundThrottle.Restore(list);
+            var back = list.Count(t => { try { using var p = System.Diagnostics.Process.GetProcessById(t.Pid); return (int)p.PriorityClass == t.OldPriority; } catch { return true; } });
+            Console.WriteLine($"restored {back} of {list.Count}");
+            return 0;
+        }
+
         // Records the system the way a game session does, without a game: checks every probe on a new machine.
         if (args is ["--record-json", var recordPath, ..])
         {
@@ -100,6 +114,7 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
+        if (args is ["--agent", ..]) return Agent.Run();
         Application.Run(new MainForm(windowed: args.Contains("--windowed")));
         return 0;
     }

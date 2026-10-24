@@ -24,7 +24,7 @@ const STRINGS = {
 
     'gm.name': 'מצב משחק', 'gm.on': 'פעיל', 'gm.off': 'כבוי', 'gm.turnOn': 'הפעל', 'gm.turnOff': 'כבה והחזר הכל',
     'gm.willTitle': 'בלחיצה:', 'gm.didTitle': 'מה נעשה:', 'gm.nothing': 'אין כרגע מה לסגור. מצב החשמל כבר מוכן.',
-    'gm.autoNote': 'נדלק לבד כשמפעילים משחק מכאן.', 'gm.backNote': 'כשהמשחק נסגר הכל חוזר לבד.',
+    'gm.autoNote': 'נדלק לבד כשמשחק מתחיל.', 'gm.backNote': 'כשהמשחק נסגר הכל חוזר לבד.',
     'gm.onToast': 'מצב משחק פעיל ({n} שינויים)', 'gm.offToast': 'המחשב חזר למצב הרגיל',
 
     'power.title': 'לצאת מ-BoostOS?', 'power.text': 'אפשר גם רק לחזור לשולחן העבודה. BoostOS יחכה ברקע.',
@@ -149,7 +149,8 @@ const STRINGS = {
 
     'settings.title': 'הגדרות', 'settings.lang': 'שפה', 'settings.langSub': 'עברית או English',
     'settings.favorite': 'משחק מועדף', 'settings.favoriteSub': 'המשחק בריבוע הגדול הראשון',
-    'settings.gmOnPlay': 'מצב משחק כשמפעילים משחק', 'settings.gmOnPlaySub': 'נדלק לבד כשמשחק נפתח מכאן, ונכבה כשהוא נסגר',
+    'settings.gmOnPlay': 'מצב משחק כשמפעילים משחק', 'settings.gmOnPlaySub': 'נדלק לבד כשמשחק מתחיל, מכאן או מ-Epic ו-Steam, ונכבה כשהוא נסגר',
+    'settings.recorder': 'הקלטה ברקע', 'settings.recorderSub': 'רכיב קטן שעולה עם ווינדוס: כל משחק נמדד ומצב משחק נדלק, גם כש-BoostOS סגור',
     'settings.sounds': 'צלילי ממשק', 'settings.soundsSub': 'צליל קצר בכל תזוזה ובחירה',
     'settings.rumble': 'רטט בשלט', 'settings.rumbleSub': 'רטט עדין כשבוחרים',
     'settings.fullscreen': 'פתיחה במסך מלא', 'settings.fullscreenSub': 'BoostOS נפתח כמו קונסולה, בלי שורת המשימות',
@@ -187,7 +188,7 @@ const STRINGS = {
 
     'gm.name': 'Game Mode', 'gm.on': 'On', 'gm.off': 'Off', 'gm.turnOn': 'Turn on', 'gm.turnOff': 'Turn off and put back',
     'gm.willTitle': 'One press will:', 'gm.didTitle': 'What was done:', 'gm.nothing': 'Nothing to close right now. Power mode is already set.',
-    'gm.autoNote': 'Turns on by itself when you start a game from here.', 'gm.backNote': 'When the game closes, everything goes back.',
+    'gm.autoNote': 'Turns on by itself when a game starts.', 'gm.backNote': 'When the game closes, everything goes back.',
     'gm.onToast': 'Game Mode on ({n} changes)', 'gm.offToast': 'Your PC is back to normal',
 
     'power.title': 'Exit BoostOS?', 'power.text': 'You can also just go to the desktop. BoostOS waits in the background.',
@@ -312,7 +313,8 @@ const STRINGS = {
 
     'settings.title': 'Settings', 'settings.lang': 'Language', 'settings.langSub': 'עברית or English',
     'settings.favorite': 'Favourite game', 'settings.favoriteSub': 'The game on the big first tile',
-    'settings.gmOnPlay': 'Game Mode when a game starts', 'settings.gmOnPlaySub': 'Turns on when a game starts from here, off when it closes',
+    'settings.gmOnPlay': 'Game Mode when a game starts', 'settings.gmOnPlaySub': 'Turns on when a game starts, from here or from Epic and Steam, and off when it closes',
+    'settings.recorder': 'Background recorder', 'settings.recorderSub': 'A small part that starts with Windows: every game is measured and Game Mode comes on, even with BoostOS closed',
     'settings.sounds': 'Interface sounds', 'settings.soundsSub': 'A short sound on every move and selection',
     'settings.rumble': 'Controller rumble', 'settings.rumbleSub': 'A light rumble when you select',
     'settings.fullscreen': 'Start full screen', 'settings.fullscreenSub': 'BoostOS opens like a console, no taskbar',

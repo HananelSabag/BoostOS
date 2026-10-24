@@ -26,7 +26,7 @@ internal sealed class MainForm : Form
     private readonly SemaphoreSlim systemChanges = new(1, 1);
     private AppSettings settings = AppSettings.Load();
     private CancellationTokenSource? netTest;
-    private MatchRecorder? recorder;
+    private readonly GameWatcher watcher;
     private bool fullscreen;
     private bool checkingGame;
     private string? startupRecoveryError;
@@ -62,13 +62,18 @@ internal sealed class MainForm : Form
             try { await OnResizedAsync(); }
             catch (Exception ex) { ReportError("resize", ex); }
         };
+        watcher = new GameWatcher(() => settings, () => periodicWifiSpikes);
+        watcher.Started += OnGameStarted;
+        watcher.Finished += OnGameFinished;
         FormClosing += (_, _) =>
         {
             netTest?.Cancel();
-            recorder?.Dispose();
+            watcher.Dispose();
         };
         gameWatch.Tick += (_, _) => WatchGame();
         gameWatch.Start();
+        // The background recorder: every game gets recorded, however it was started.
+        Agent.Sync(settings);
     }
 
     private async Task InitWebAsync()
@@ -226,6 +231,7 @@ internal sealed class MainForm : Form
                     settings = JsonSerializer.Deserialize<AppSettings>(msg.GetProperty("settings").GetRawText(), Program.Json) ?? settings;
                     settings.Save();
                     I18n.English = settings.Language == "en";
+                    Agent.Sync(settings);
                     Post("settings", settings);
                     break;
 
@@ -358,86 +364,58 @@ internal sealed class MainForm : Form
 
     /// <summary>
     /// Every 4 seconds: is one of the library's games running? (The kernel's process snapshot only, never a handle
-    /// to the game.) Start recording when a game starts; when it ends, save the report, undo Game Mode and come back.
+    /// to the game.) The shared watcher records and restores when this copy owns the session; the background
+    /// recorder may own it instead, and then this window only shows what happened.
     /// </summary>
     private async void WatchGame()
     {
-        if (checkingGame) return;
+        if (checkingGame || IsDisposed || Disposing) return;
         checkingGame = true;
         try
         {
             await systemChanges.WaitAsync();
-            try { await WatchGameAsync(); }
+            try { await Task.Run(watcher.Tick); }
             finally { systemChanges.Release(); }
         }
         catch (Exception ex) { ReportError("gameWatch", ex); }
         finally { checkingGame = false; }
     }
 
-    private async Task WatchGameAsync()
+    private void OnGameStarted(GameInfo game, GameModeStatus? applied) => OnUiThread(() =>
     {
-        if (IsDisposed || Disposing) return;
-        if (await Task.Run(() => GameLibrary.Running()) is { } running)
-        {
-            if (watched?.Id != running.Id) Post("gameRunning", new { id = running.Id, name = running.Name });
-            watched = running;
-            if (recorder is null && settings.TrackMatches) recorder = new MatchRecorder(GameMode.IsActive, running);
-            return;
-        }
-        if (watched is null) return;
-        watched = null;
+        Post("gameRunning", new { id = game.Id, name = game.Name });
+        if (applied is not null) Post("gameMode", applied);
+    });
 
-        MatchReport? report = null;
-        var reportSaved = false;
-        Exception? reportError = null;
-        if (recorder is not null)
-        {
-            var r = recorder;
-            recorder = null;
-            try
-            {
-                report = await Task.Run(r.Finish);
-                MatchStore.Add(report);
-                reportSaved = true;
-            }
-            catch (Exception ex)
-            {
-                reportError = ex;
-                try { r.Dispose(); } catch { }
-            }
-        }
-
-        GameModeStatus? status = null;
-        Exception? restoreError = null;
-        // Recording or storing a report must never prevent recovery. Recheck after awaiting the recorder:
-        // the user may already have started another game outside BoostOS.
-        var stillRunning = await Task.Run(() => GameLibrary.Running());
-        var gameClosed = stillRunning is null;
-        watched = stillRunning;
-        if (gameClosed && GameMode.IsActive)
-        {
-            try { status = await Task.Run(() => GameMode.Restore(periodicWifiSpikes)); }
-            catch (Exception ex) { restoreError = ex; }
-        }
-        Post("gameRunning", new { id = stillRunning?.Id, name = stillRunning?.Name });
-
+    private void OnGameFinished(GameWatcher.Ended e) => OnUiThread(async () =>
+    {
+        Post("gameRunning", new { id = (string?)null, name = (string?)null });
         // Come back to the front only if BoostOS stepped aside for this match.
-        if (gameClosed && WindowState == FormWindowState.Minimized && !IsDisposed && !Disposing)
+        if (WindowState == FormWindowState.Minimized && !IsDisposed && !Disposing)
         {
             WindowState = FormWindowState.Normal;
             SetFullscreen(fullscreen);
             Activate();
         }
-        if (status is not null) Post("gameMode", status);
-        if (report is { Minutes: >= 1 }) Post("matchReport", new { report, previous = MatchStore.Load().Skip(reportSaved ? 1 : 0).FirstOrDefault() });
-        if (status is not null) Post("notice", new { message = status.Active
-            ? I18n.L("המשחק נסגר. חלק מהשינויים עדיין ממתינים לשחזור; אפשר לנסות שוב בלחצן השחזור.", "The game closed. Some changes still need recovery; use the restore button to retry.")
-            : I18n.L("המשחק נסגר. המחשב חזר למצב הרגיל.", "The game closed. Your PC is back to normal.") });
-        if (reportError is not null) ReportError("matchReport", reportError);
-        if (restoreError is not null) ReportError("gameModeRecovery", restoreError);
-    }
-
-    private GameInfo? watched;
+        var report = e.Report;
+        if (!e.Owner)
+        {
+            // The background recorder owned this session: its report lands in a few seconds.
+            var since = DateTime.Now.AddMinutes(-1);
+            for (var i = 0; i < 12 && report is null; i++)
+            {
+                await Task.Delay(1000);
+                report = MatchStore.Load().FirstOrDefault(m => m.Start.AddMinutes(m.Minutes) >= since);
+            }
+        }
+        Post("gameMode", GameMode.Status(periodicWifiSpikes));
+        if (report is { Minutes: >= 1 }) Post("matchReport", new { report, previous = MatchStore.Load().Skip(1).FirstOrDefault() });
+        if (e.Restored is { } status)
+            Post("notice", new { message = status.Active
+                ? I18n.L("המשחק נסגר. חלק מהשינויים עדיין ממתינים לשחזור; אפשר לנסות שוב בלחצן השחזור.", "The game closed. Some changes still need recovery; use the restore button to retry.")
+                : I18n.L("המשחק נסגר. המחשב חזר למצב הרגיל.", "The game closed. Your PC is back to normal.") });
+        if (e.Error is not null) ReportError("matchReport", e.Error);
+    });
 
     private void ReportError(string cmd, Exception error)
     {
