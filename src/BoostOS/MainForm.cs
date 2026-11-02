@@ -196,6 +196,9 @@ internal sealed class MainForm : Form
                         Post("error", new { cmd = "gameModeRecovery", message = recoveryError });
                     }
                     Post("games", await Task.Run(() => GameLibrary.List(refresh: true)));
+                    // Sessions whose summary never reached the list come back from their archives.
+                    if (await Task.Run(() => MatchStore.Recover(gpuMaxClock: Diagnostics.GpuCheck.MaxClock)) > 0)
+                        Post("matches", MatchStore.Load());
                     break;
 
                 case "games":
@@ -335,8 +338,8 @@ internal sealed class MainForm : Form
             ?? games.FirstOrDefault(g => g.IsRocketLeague) ?? games.FirstOrDefault();
     }
 
-    private bool LastSessionHot() =>
-        MatchStore.Load().FirstOrDefault() is { } m && (m.GpuThermalLimitedPct is >= 20 || m.GpuTempMax is >= 86);
+    // Hot enough to matter: heat cost frames (slowed while maxed out). At its limit with power to spare is by design.
+    private bool LastSessionHot() => MatchStore.Load().FirstOrDefault() is { GpuThermalBusyPct: >= 5 };
 
     private async Task PlayAsync(GameInfo? game, bool withGameMode)
     {
@@ -405,6 +408,8 @@ internal sealed class MainForm : Form
             for (var i = 0; i < 12 && report is null; i++)
             {
                 await Task.Delay(1000);
+                // Halfway through, stop waiting for its list entry and take the session from its archive.
+                if (i == 6) try { await Task.Run(() => MatchStore.Recover()); } catch (Exception ex) { Log.Error("recovering the session", ex); }
                 report = MatchStore.Load().FirstOrDefault(m => m.Start.AddMinutes(m.Minutes) >= since);
             }
         }
@@ -419,7 +424,7 @@ internal sealed class MainForm : Form
 
     private void ReportError(string cmd, Exception error)
     {
-        Debug.WriteLine($"{cmd}: {error}");
+        Log.Error(cmd, error);
         try { Post("error", new { cmd, message = error.Message }); }
         catch (Exception postError) { Debug.WriteLine(postError); } // WebView2 may already be closing; never escape an async event handler.
     }

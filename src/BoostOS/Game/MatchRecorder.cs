@@ -35,7 +35,7 @@ internal sealed class MatchRecorder : IDisposable
     private PingProbe? ping;
     private CpuClockProbe? cpuClock;
     private BackgroundCpu? background;
-    private double? ramTotalGb, vramTotalMb;
+    private double? ramTotalGb, vramTotalMb, gpuMaxClock;
     private WifiProbe.Reading? wifi;
     private int tick;
     private readonly bool live; // the real probes run (false in tests)
@@ -54,7 +54,7 @@ internal sealed class MatchRecorder : IDisposable
             smi = new Process
             {
                 StartInfo = new ProcessStartInfo(exe,
-                    "--query-gpu=uuid,utilization.gpu,temperature.gpu,clocks.gr,power.draw,clocks_event_reasons.active,memory.used,memory.total --format=csv,noheader,nounits -lms 2000")
+                    "--query-gpu=uuid,utilization.gpu,temperature.gpu,clocks.gr,power.draw,clocks_event_reasons.active,memory.used,memory.total,enforced.power.limit,clocks.max.graphics --format=csv,noheader,nounits -lms 2000")
                 {
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -67,6 +67,7 @@ internal sealed class MatchRecorder : IDisposable
             smi.ErrorDataReceived += (_, _) => { }; // drain errors so the optional producer cannot block
             smi.Exited += (_, _) => { lock (gate) gpu.Invalidate(); };
             if (!smi.Start()) throw new InvalidOperationException("Could not start GPU telemetry");
+            ChildProcesses.Adopt(smi); // never left polling the GPU if this copy of BoostOS is killed
             smi.BeginOutputReadLine();
             smi.BeginErrorReadLine();
         }
@@ -130,6 +131,7 @@ internal sealed class MatchRecorder : IDisposable
                 if (stopped) return;
                 var latest = gpu.Current(seconds);
                 if (latest?.VramTotalMb is { } total) vramTotalMb = total;
+                if (latest?.MaxClock is { } top) gpuMaxClock = top;
                 if (samples.Count >= MaxSamples) { samples.RemoveAt(0); truncated = true; }
                 samples.Add(new MatchSample(latest?.Util ?? double.NaN, latest?.Temp ?? double.NaN,
                     latest?.Clock ?? double.NaN, latest?.Power ?? double.NaN,
@@ -143,6 +145,7 @@ internal sealed class MatchRecorder : IDisposable
                     CpuMhz = mhz, RamPct = ram, VramMb = latest?.VramMb,
                     RouterMs = ping?.LastRouter, InternetMs = ping?.LastInternet,
                     WifiQuality = wifi?.Quality, WifiRssi = wifi?.Rssi, WifiRxMbps = wifi?.RxMbps,
+                    GpuPowerLimit = latest?.PowerLimit,
                 });
             }
         }
@@ -185,11 +188,12 @@ internal sealed class MatchRecorder : IDisposable
             if (finalReport is not null) return finalReport;
             Dispose();
             List<MatchSample> saved;
-            lock (gate) saved = [.. samples];
+            double? topClock;
+            lock (gate) { saved = [.. samples]; topClock = gpuMaxClock; }
             var end = ended ?? start;
             var pings = ping?.Results() ?? [];
             try { background?.Sample(); } catch { }
-            var report = Summarize(start.LocalDateTime, end.LocalDateTime, gameMode, saved) with
+            var report = Summarize(start.LocalDateTime, end.LocalDateTime, gameMode, saved, topClock) with
             {
                 Minutes = Math.Round(Math.Max(0, (end - start).TotalMinutes), 1),
                 TelemetryTruncated = truncated,
@@ -204,20 +208,22 @@ internal sealed class MatchRecorder : IDisposable
             };
             try
             {
-                var name = SessionArchive.Save(SessionSummary.Recording(start, end, gameMode, truncated, saved), archiveDirectory);
+                // The summary travels inside the archive: if it never reaches the list, MatchStore.Recover finds it there.
+                var name = SessionArchive.Save(SessionSummary.Recording(start, end, gameMode, truncated, saved) with { Report = report },
+                    archiveDirectory);
                 report = report with { TelemetryFile = name };
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                Debug.WriteLine(ex);
+                Log.Error("saving the session archive", ex);
                 report = report with { TelemetrySaveFailed = true };
             }
             return finalReport = report;
         }
     }
 
-    internal static MatchReport Summarize(DateTime start, DateTime end, bool gameMode, IReadOnlyList<MatchSample> s)
-        => SessionSummary.Build(start, end, gameMode, s);
+    internal static MatchReport Summarize(DateTime start, DateTime end, bool gameMode, IReadOnlyList<MatchSample> s,
+        double? gpuMaxClock = null) => SessionSummary.Build(start, end, gameMode, s, gpuMaxClock);
 
     public void Dispose()
     {
@@ -248,24 +254,100 @@ internal sealed class MatchRecorder : IDisposable
     }
 }
 
-/// <summary>The last matches, newest first, so a report can be compared with the one before it.</summary>
+/// <summary>
+/// The last sessions, newest first, so a report can be compared with the one before it. matches.json is the quick
+/// list; the archives in sessions\ are the record. A session whose summary never reached the list (a failed write, a
+/// copy closed between the two) comes back from its archive in <see cref="Recover"/>.
+/// </summary>
 internal static class MatchStore
 {
-    private static string FilePath => Path.Combine(AppSettings.DataDir, "matches.json");
+    private const int Keep = 20;
+    private const string MutexName = @"Local\BoostOS.MatchStore"; // one writer at a time: the window and the recorder
 
-    public static List<MatchReport> Load()
+    private static string FilePath => Path.Combine(AppSettings.DataDir, "matches.json");
+    private static string ArchiveDir => Path.Combine(AppSettings.DataDir, "sessions");
+
+    public static List<MatchReport> Load(string? path = null)
     {
-        try { return File.Exists(FilePath) ? JsonSerializer.Deserialize<List<MatchReport>>(File.ReadAllText(FilePath)) ?? [] : []; }
+        try { return Read(path ?? FilePath); }
         catch { return []; }
     }
 
-    public static void Add(MatchReport report)
+    public static void Add(MatchReport report, string? path = null)
     {
         // Ignore launches that never reached gameplay.
         if (report.Minutes < 1) return;
-        var list = Load();
-        list.Insert(0, report);
-        Directory.CreateDirectory(AppSettings.DataDir);
-        SessionArchive.WriteAtomic(FilePath, list.Take(20).ToList());
+        Update(path ?? FilePath, list =>
+        {
+            if (Contains(list, report.TelemetryFile, report.Start)) return false;
+            list.Add(report);
+            return true;
+        });
+    }
+
+    /// <summary>Brings back archived sessions (a minute or longer) that are missing from the list. Returns how many.</summary>
+    /// <param name="gpuMaxClock">Asked only when an old archive (no summary inside) has to be rebuilt.</param>
+    public static int Recover(string? path = null, string? archives = null, Func<double?>? gpuMaxClock = null)
+    {
+        var files = SessionArchive.Files(archives ?? ArchiveDir).ToList();
+        if (files.Count == 0) return 0;
+        var added = 0;
+        Update(path ?? FilePath, list =>
+        {
+            var oldest = list.Count >= Keep ? list.Min(m => m.Start) : DateTime.MinValue;
+            double? topClock = null;
+            var askedClock = false;
+            foreach (var file in files)
+            {
+                var start = SessionArchive.StartOf(file.Name)?.LocalDateTime;
+                if (start is not { } s || s <= oldest || Contains(list, file.Name, s)) continue;
+                try
+                {
+                    var recording = JsonSerializer.Deserialize<SessionRecording>(File.ReadAllText(file.FullName));
+                    if (recording is null) continue;
+                    if (recording.Report is null && !askedClock) { askedClock = true; topClock = gpuMaxClock?.Invoke(); }
+                    var report = (recording.Report ?? SessionSummary.Rebuild(recording, topClock))
+                        with { TelemetryFile = file.Name, Recovered = true };
+                    if (report.Minutes < 1) continue;
+                    list.Add(report);
+                    added++;
+                }
+                catch (Exception ex) { Log.Error($"reading {file.Name}", ex); }
+            }
+            return added > 0;
+        });
+        if (added > 0) Log.Write($"recovered {added} session(s) from their archives");
+        return added;
+    }
+
+    /// <summary>The same session: the same archive, or a start within half a minute (two copies that both recorded it).</summary>
+    private static bool Contains(List<MatchReport> list, string? archive, DateTime start) =>
+        list.Any(m => (archive is not null && string.Equals(m.TelemetryFile, archive, StringComparison.OrdinalIgnoreCase))
+                      || Math.Abs((m.Start - start).TotalSeconds) < 30);
+
+    private static List<MatchReport> Read(string path) =>
+        File.Exists(path) ? JsonSerializer.Deserialize<List<MatchReport>>(File.ReadAllText(path)) ?? [] : [];
+
+    private static void Update(string path, Func<List<MatchReport>, bool> change)
+    {
+        using var mutex = new Mutex(false, MutexName);
+        var owned = false;
+        try
+        {
+            try { owned = mutex.WaitOne(TimeSpan.FromSeconds(15)); }
+            catch (AbandonedMutexException) { owned = true; } // the other copy died mid-write; the file is still whole
+            List<MatchReport> list;
+            try { list = Read(path); }
+            catch (JsonException ex)
+            {
+                // A damaged list must not block new sessions; keep it aside and rebuild from the archives.
+                Log.Error("reading matches.json", ex);
+                File.Move(path, Path.ChangeExtension(path, ".damaged.json"), overwrite: true);
+                list = [];
+            }
+            if (!change(list)) return;
+            SessionArchive.WriteAtomic(path, list.OrderByDescending(m => m.Start).Take(Keep).ToList());
+        }
+        finally { if (owned) mutex.ReleaseMutex(); }
     }
 }

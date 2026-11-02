@@ -19,6 +19,7 @@ public sealed record MatchSample(double GpuUtil, double GpuTemp, double GpuClock
     public int? WifiQuality { get; init; }
     public int? WifiRssi { get; init; }
     public double? WifiRxMbps { get; init; }
+    public double? GpuPowerLimit { get; init; }
 }
 
 /// <summary>Ping results for one target during the session (the warm-up excluded).</summary>
@@ -59,6 +60,20 @@ public sealed record MatchReport(
     public PingStats? Internet { get; init; }
     public WifiStats? Wifi { get; init; }
     public IReadOnlyList<BackgroundApp>? Background { get; init; }
+
+    // Schema 4: whether heat cost anything, and what held the card back when it wasn't heat.
+    /// <summary>Slowed by heat while maxed out (90%+ busy): the only heat that costs frames.</summary>
+    public double? GpuThermalBusyPct { get; init; }
+    /// <summary>Share of the session the card was maxed out (90%+ busy).</summary>
+    public double? GpuBusyPct { get; init; }
+    /// <summary>Working hard (60%+ busy) at under half its top clock: held down by something other than heat.</summary>
+    public double? GpuLowClockPct { get; init; }
+    public double? GpuMaxClockMhz { get; init; }
+    public double? GpuPowerLimitAvg { get; init; }
+    /// <summary>Seconds from the game's start until the card first reached 85°C.</summary>
+    public double? GpuHotAfterSec { get; init; }
+    /// <summary>Rebuilt from its archive because the summary never reached the list.</summary>
+    public bool Recovered { get; init; }
 }
 
 public sealed record SessionPoint(double Seconds, double? GpuTemp, double? GpuUtil, ulong? ClockReasons)
@@ -78,10 +93,15 @@ public sealed record RecordedSample(DateTimeOffset At, double Seconds, string? G
     public double? InternetMs { get; init; }
     public int? WifiQuality { get; init; }
     public int? WifiRssi { get; init; }
+    public double? GpuPowerLimit { get; init; }
 }
 
 public sealed record SessionRecording(int SchemaVersion, DateTimeOffset Start, DateTimeOffset End,
-    bool GameMode, string? GpuId, bool Truncated, IReadOnlyList<RecordedSample> Samples);
+    bool GameMode, string? GpuId, bool Truncated, IReadOnlyList<RecordedSample> Samples)
+{
+    /// <summary>The finished summary, so the archive alone can bring a session back to the list.</summary>
+    public MatchReport? Report { get; init; }
+}
 
 internal static class SessionSummary
 {
@@ -89,10 +109,15 @@ internal static class SessionSummary
     internal const ulong PowerMask = 0x04;
     internal const ulong ThermalMask = 0x60;
     internal const ulong HardwareMask = 0x88;
+    /// <summary>"Maxed out": at this load the card itself is what limits the frame rate.</summary>
+    internal const double BusyUtil = 90;
+    internal const double HotTemp = 85;
 
     internal static double? Finite(double value) => double.IsFinite(value) ? value : null;
 
-    internal static MatchReport Build(DateTime start, DateTime end, bool gameMode, IReadOnlyList<MatchSample> samples)
+    /// <param name="gpuMaxClock">The card's top graphics clock (nvidia-smi clocks.max.graphics), when known.</param>
+    internal static MatchReport Build(DateTime start, DateTime end, bool gameMode, IReadOnlyList<MatchSample> samples,
+        double? gpuMaxClock = null)
     {
         // New recordings use elapsed monotonic time. Keep the historical behavior for old synthetic samples.
         var timed = samples.Any(s => s.Seconds is not null);
@@ -135,14 +160,32 @@ internal static class SessionSummary
             return values.Count == 0 ? null : Math.Round(values.Max(), 1);
         }
         var clocks = play.Select(s => s.CpuMhz).Where(v => v is > 0).Select(v => v!.Value).Order().ToList();
+        // The slow moments that matter are the ones where the game was using the CPU; a resting core may clock down.
+        var gameClocks = play.Where(s => s.CpuMhz is > 0 && s.BusiestCore >= 40).Select(s => s.CpuMhz!.Value).Order().ToList();
+        var lows = gameClocks.Count >= 10 ? gameClocks : clocks;
         var wifi = play.Where(s => s.WifiQuality is not null).ToList();
+        double? Pct(int count, int total) => total == 0 ? null : Math.Round(100d * count / total, 1);
+        // A laptop GPU boosts until it reaches its temperature target, then trims its clock to stay there. That only
+        // costs frames when the card is maxed out at the same moment.
+        var thermalBusy = reasons.Count == 0 ? null
+            : Pct(reasons.Count(s => (s.ClockReasons!.Value & ThermalMask) != 0 && s.GpuUtil >= BusyUtil), reasons.Count);
+        var topClock = gpuMaxClock is > 0 ? gpuMaxClock : null;
+        var lowClock = topClock is { } top
+            ? Pct(gpu.Count(s => s.GpuUtil >= 60 && s.GpuClock < top * 0.5), gpu.Count) : null;
         return new MatchReport(start, Math.Round(Math.Max(0, (end - start).TotalMinutes), 1), gameMode, play.Count,
             util, Avg(s => s.GpuTemp), Max(s => s.GpuTemp), Avg(s => s.GpuClock), Avg(s => s.GpuPower), limited,
             Avg(s => s.Cpu, cpu) ?? 0, busiest, bottleneck)
         {
-            SchemaVersion = 3,
+            SchemaVersion = 4,
             CpuMhzAvg = clocks.Count == 0 ? null : Math.Round(clocks.Average()),
-            CpuMhzLow = clocks.Count == 0 ? null : clocks[(int)(clocks.Count * 0.05)], // 5th percentile: the slow moments
+            CpuMhzLow = lows.Count == 0 ? null : lows[(int)(lows.Count * 0.05)], // 5th percentile: the slow moments
+            GpuThermalBusyPct = thermalBusy,
+            GpuBusyPct = Pct(gpu.Count(s => s.GpuUtil >= BusyUtil), gpu.Count),
+            GpuLowClockPct = lowClock,
+            GpuMaxClockMhz = topClock,
+            GpuPowerLimitAvg = AvgOf(s => s.GpuPowerLimit),
+            GpuHotAfterSec = samples.FirstOrDefault(s => s.Seconds is not null && s.GpuTemp >= HotTemp)?.Seconds is { } hot
+                ? Math.Round(hot) : null,
             RamMaxPct = MaxOf(s => s.RamPct),
             VramMaxMb = MaxOf(s => s.VramMb),
             Wifi = wifi.Count == 0 ? null : new WifiStats(AvgOf(s => s.WifiQuality), wifi.Min(s => s.WifiQuality),
@@ -208,7 +251,7 @@ internal static class SessionSummary
     }
 
     internal static SessionRecording Recording(DateTimeOffset start, DateTimeOffset end, bool gameMode,
-        bool truncated, IReadOnlyList<MatchSample> samples) => new(3, start, end, gameMode,
+        bool truncated, IReadOnlyList<MatchSample> samples) => new(4, start, end, gameMode,
             samples.Select(s => s.GpuId).FirstOrDefault(id => id is not null), truncated,
             samples.Select(s => new RecordedSample(s.At ?? start.AddSeconds(s.Seconds ?? 0), s.Seconds ?? 0,
                 s.GpuId, Finite(s.GpuUtil), Finite(s.GpuTemp), Finite(s.GpuClock), Finite(s.GpuPower), s.ClockReasons,
@@ -216,14 +259,31 @@ internal static class SessionSummary
                 s.GpuObservedAt)
             {
                 CpuMhz = s.CpuMhz, RamPct = s.RamPct, VramMb = s.VramMb, RouterMs = s.RouterMs, InternetMs = s.InternetMs,
-                WifiQuality = s.WifiQuality, WifiRssi = s.WifiRssi,
+                WifiQuality = s.WifiQuality, WifiRssi = s.WifiRssi, GpuPowerLimit = s.GpuPowerLimit,
             }).ToList());
+
+    /// <summary>The summary of an archive that has none inside (archives from before schema 4).</summary>
+    internal static MatchReport Rebuild(SessionRecording recording, double? gpuMaxClock)
+    {
+        var samples = recording.Samples.Select(s => new MatchSample(s.GpuUtil ?? double.NaN, s.GpuTemp ?? double.NaN,
+            s.GpuClock ?? double.NaN, s.GpuPower ?? double.NaN, s.ClockReasons is { } r && (r & LimitedMask) != 0,
+            s.Cpu ?? double.NaN, s.BusiestCore ?? double.NaN)
+        {
+            At = s.At, Seconds = s.Seconds, ClockReasons = s.ClockReasons, GpuId = s.GpuId, GpuObservedAt = s.GpuObservedAt,
+            CpuAvailable = s.Cpu is not null, CpuMhz = s.CpuMhz, RamPct = s.RamPct, VramMb = s.VramMb, RouterMs = s.RouterMs,
+            InternetMs = s.InternetMs, WifiQuality = s.WifiQuality, WifiRssi = s.WifiRssi, GpuPowerLimit = s.GpuPowerLimit,
+        }).ToList();
+        return Build(recording.Start.LocalDateTime, recording.End.LocalDateTime, recording.GameMode, samples, gpuMaxClock)
+            with { TelemetryTruncated = recording.Truncated };
+    }
 }
 
 internal sealed record GpuReading(double Util, double Temp, double Clock, double Power, ulong? Reasons, double ObservedSeconds)
 {
     public double? VramMb { get; init; }
     public double? VramTotalMb { get; init; }
+    public double? PowerLimit { get; init; }
+    public double? MaxClock { get; init; }
 }
 
 /// <summary>One GPU for the entire session; a missing/stale value never means zero utilization or no limiting.</summary>
@@ -237,7 +297,7 @@ internal sealed class GpuSampleStream
     {
         if (ended || string.IsNullOrWhiteSpace(line)) return false;
         var values = line.Split(',').Select(s => s.Trim()).ToArray();
-        if (values.Length is not (6 or 8) || !(values[0].StartsWith("GPU-", StringComparison.Ordinal)
+        if (values.Length is not (6 or 8 or 10) || !(values[0].StartsWith("GPU-", StringComparison.Ordinal)
             || values[0].StartsWith("MIG-", StringComparison.Ordinal))) return false;
         SelectedId ??= values[0];
         if (!string.Equals(SelectedId, values[0], StringComparison.Ordinal)) return false;
@@ -250,8 +310,10 @@ internal sealed class GpuSampleStream
         latest = new GpuReading(Number(1) is var util && util <= 100 ? util : double.NaN,
             Number(2), Number(3), Number(4), known ? reasons : null, seconds)
         {
-            VramMb = values.Length == 8 ? SessionSummary.Finite(Number(6)) : null,
-            VramTotalMb = values.Length == 8 ? SessionSummary.Finite(Number(7)) : null,
+            VramMb = values.Length >= 8 ? SessionSummary.Finite(Number(6)) : null,
+            VramTotalMb = values.Length >= 8 ? SessionSummary.Finite(Number(7)) : null,
+            PowerLimit = values.Length == 10 ? SessionSummary.Finite(Number(8)) : null,
+            MaxClock = values.Length == 10 ? SessionSummary.Finite(Number(9)) : null,
         };
         return true;
     }
@@ -283,6 +345,16 @@ internal static class SessionArchive
     private static bool IsArchiveName(string name) =>
         System.Text.RegularExpressions.Regex.IsMatch(name, @"^session-\d{8}T\d{9}-[a-f0-9]{32}\.json$");
 
+    /// <summary>Our archives in a folder, newest first (the name starts with the start time in UTC).</summary>
+    internal static IEnumerable<FileInfo> Files(string directory) => !Directory.Exists(directory) ? []
+        : new DirectoryInfo(directory).EnumerateFiles("session-*.json").Where(f => IsArchiveName(f.Name))
+            .OrderByDescending(f => f.Name, StringComparer.Ordinal);
+
+    /// <summary>The start time written in an archive's name, without opening it.</summary>
+    internal static DateTimeOffset? StartOf(string name) =>
+        name.Length > 26 && DateTimeOffset.TryParseExact(name.AsSpan(8, 18), "yyyyMMddTHHmmssfff", CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal, out var start) ? start : null;
+
     internal static void WriteAtomic<T>(string path, T value)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -294,7 +366,12 @@ internal static class SessionArchive
                 JsonSerializer.Serialize(stream, value);
                 stream.Flush(flushToDisk: true);
             }
-            File.Move(temporary, path, overwrite: true);
+            // A reader (the other BoostOS copy, an antivirus scan) can hold the old file for a moment: try again briefly.
+            for (var attempt = 1; ; attempt++)
+            {
+                try { File.Move(temporary, path, overwrite: true); break; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 6) { Thread.Sleep(100 * attempt); }
+            }
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }

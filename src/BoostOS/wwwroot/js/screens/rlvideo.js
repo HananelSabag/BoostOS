@@ -132,6 +132,6 @@ function paint() {
   $('#vid-advice', root).innerHTML = running
     ? `<h3>${t('vid.closeFirst')}</h3><p>${t('vid.closeFirstText')}</p>`
     : s?.hot && last
-      ? `<h3 class="s-warn">${t('vid.hotTitle')}</h3><p>${t('vid.hotText', { temp: Math.round(last.gpuTempMax ?? 0), pct: Math.round(last.gpuThermalLimitedPct ?? 0) })}</p>`
+      ? `<h3 class="s-warn">${t('vid.hotTitle')}</h3><p>${t('vid.hotText', { temp: Math.round(last.gpuTempMax ?? 0), pct: Math.round(last.gpuThermalBusyPct ?? 0) })}</p>`
       : `<h3>${t('vid.okTitle')}</h3><p>${t('vid.okText')}</p>`;
 }

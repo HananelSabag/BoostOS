@@ -102,20 +102,24 @@ function renderSummary(list) {
   box.hidden = false;
   const minutes = of(list, m => m.minutes).reduce((a, b) => a + b, 0);
   const thermal = avg(of(list, m => m.gpuThermalLimitedPct));
+  const cost = avg(of(list, heatCost));
   const peak = Math.max(...of(list, m => m.gpuTempMax), 0);
-  const hotCount = of(list, m => m.gpuTempMax).filter(x => x >= 86).length;
+  const held = list.filter(m => (lowClock(m) ?? 0) >= 30);
   const routers = list.map(m => m.router).filter(Boolean);
   const spikesPerHour = routers.length ? routers.reduce((a, r) => a + r.spikes, 0) / Math.max(1, of(list.filter(m => m.router), m => m.minutes).reduce((a, b) => a + b, 0)) * 60 : null;
   const routerMs = avg(routers.map(r => r.medianMs).filter(finite));
   const cpuGhz = avg(of(list, m => m.cpuMhzAvg));
-  const gpuLoad = avg(of(list, m => m.gpuUtil));
 
+  // Heat counts as a problem only where it cost frames: slowed while maxed out. Sitting at the limit with power
+  // to spare is how a laptop GPU is built to run.
   let main;
-  if (thermal != null && thermal >= 15) main = ['bad', t('sum.heat', { pct: Math.round(thermal), peak: Math.round(peak), n: hotCount, total: list.length }), t('sum.heatTip', { load: Math.round(gpuLoad ?? 0) })];
+  if (cost != null && cost >= 5) main = ['bad', t('sum.heatCost', { pct: Math.round(cost), peak: Math.round(peak) }), t('ins.thermalTip')];
+  else if (held.length) main = ['warn', t('sum.held', { n: held.length, total: list.length, mhz: Math.round(avg(of(held, m => m.gpuClock)) ?? 0) }), t('ins.gpuHeldTip')];
   else if (spikesPerHour != null && spikesPerHour > 12) main = ['warn', t('sum.wifi', { n: Math.round(spikesPerHour) }), t('ins.wifiTip')];
   else main = ['ok', t('sum.none'), ''];
 
   const good = [];
+  if (thermal != null && thermal >= 15 && (cost ?? 0) < 5) good.push(t('sum.goodHeat', { peak: Math.round(peak) }));
   if (routerMs != null && (spikesPerHour ?? 0) <= 12) good.push(t('sum.goodWifi', { ms: Math.round(routerMs), n: Math.round(spikesPerHour ?? 0) }));
   if (cpuGhz != null) good.push(t('sum.goodCpu', { ghz: (cpuGhz / 1000).toFixed(1) }));
   if (list.some(m => m.background) && !list.some(m => (m.background ?? []).some(a => !SYSTEM.has(a.name) && a.cpuPct >= 3))) good.push(t('sum.goodBg'));
@@ -127,10 +131,12 @@ function renderSummary(list) {
         <span><i>${label}</i><bdi>${Math.round(avg(of(g, m => m.gpuThermalLimitedPct)) ?? 0)}%</bdi> ${t('sum.heldShort')} · <bdi>${(avg(g.filter(m => m.router).map(m => m.router.spikes / Math.max(1, m.minutes) * 60)) ?? 0).toFixed(1)}</bdi> ${t('sum.spikesShort')}</span>`).join('')}</div>`
     : `<p class="note">${t('sum.gmAll', { n: list.length })}</p>`;
 
-  // One bar per session, oldest on the left: how much of it the card spent slowed by heat.
+  // One bar per session, oldest on the left: how much of it the card spent at its heat limit, coloured by what that
+  // cost (red: frames lost to heat; amber: the clock was held down by something else).
   const bars = [...list].reverse().map(m => {
     const v = finite(m.gpuThermalLimitedPct) ? m.gpuThermalLimitedPct : 0;
-    return `<span class="${v >= 40 ? 's-bad' : v >= 15 ? 's-warn' : 's-ok'}" style="--v:${Math.max(4, v)}%" title="${Math.round(v)}%"></span>`;
+    const c = heatCost(m) ?? 0;
+    return `<span class="${c >= 15 ? 's-bad' : c >= 5 || (lowClock(m) ?? 0) >= 30 ? 's-warn' : 's-ok'}" style="--v:${Math.max(4, v)}%" title="${Math.round(v)}%"></span>`;
   }).join('');
 
   box.innerHTML = `
@@ -158,15 +164,37 @@ const NAMES = {
 export const appName = n => NAMES[n] ?? n;
 
 const ghz = mhz => (mhz / 1000).toFixed(1);
+const after = s => s < 90 ? t('ins.sec', { n: Math.round(s) }) : t('ins.min', { n: (s / 60).toFixed(1) });
+
+/**
+ * Share of the session the card was slowed by heat while maxed out: the only heat that costs frames. Reports from
+ * before schema 4 estimate it from their timeline.
+ */
+export function heatCost(m) {
+  if (finite(m.gpuThermalBusyPct)) return m.gpuThermalBusyPct;
+  const points = Array.isArray(m.timeline) ? m.timeline.filter(p => finite(p?.gpuUtil) && finite(p?.clockReasons)) : [];
+  if (!points.length) return null;
+  return 100 * points.filter(p => p.gpuUtil >= 90 && (p.clockReasons & 0x60)).length / points.length;
+}
+
+/** Share of the session the card worked hard at under half its top clock (schema 4 only). */
+const lowClock = m => finite(m.gpuLowClockPct) ? m.gpuLowClockPct : null;
 
 /** [status, text, tip?] lines, worst first. Numbers only; the words come from the interface language. */
 export function insights(m) {
   const out = [];
-  const thermal = m.gpuThermalLimitedPct, temp = m.gpuTempMax;
-  if (finite(thermal) && thermal >= 15)
-    out.push([thermal >= 40 ? 'bad' : 'warn', t('ins.thermal', { pct: Math.round(thermal), temp: Math.round(temp ?? 0) }), t('ins.thermalTip')]);
-  else if (finite(temp) && temp >= 85) out.push(['warn', t('ins.hot', { temp: Math.round(temp) }), t('ins.thermalTip')]);
+  const thermal = m.gpuThermalLimitedPct, temp = m.gpuTempMax, cost = heatCost(m);
+  if (finite(cost) && cost >= 5)
+    out.push([cost >= 15 ? 'bad' : 'warn', t('ins.heatCost', { pct: Math.round(cost), temp: Math.round(temp ?? 0) }), t('ins.thermalTip')]);
+  else if (finite(temp) && temp >= 92) out.push(['warn', t('ins.hot', { temp: Math.round(temp) }), t('ins.thermalTip')]);
+  else if (finite(thermal) && thermal >= 15)
+    out.push(['ok', finite(m.gpuHotAfterSec)
+      ? t('ins.atLimitAfter', { after: after(m.gpuHotAfterSec), temp: Math.round(temp ?? 0) })
+      : t('ins.atLimit', { temp: Math.round(temp ?? 0), pct: Math.round(thermal) })]);
   else if (finite(temp)) out.push(['ok', t('ins.cool', { temp: Math.round(temp) })]);
+
+  if ((lowClock(m) ?? 0) >= 30)
+    out.push(['warn', `${t('ins.gpuHeld', { mhz: Math.round(m.gpuClock ?? 0), util: Math.round(m.gpuUtil ?? 0) })}${finite(m.gpuPowerLimitAvg) ? ` ${t('ins.gpuLimitW', { w: Math.round(m.gpuPowerLimitAvg) })}` : ''}`, t('ins.gpuHeldTip')]);
 
   if (finite(m.gpuPowerLimitedPct) && m.gpuPowerLimitedPct >= 30) out.push(['info', t('ins.power', { pct: Math.round(m.gpuPowerLimitedPct) }), t('ins.powerTip')]);
 
@@ -210,9 +238,11 @@ function metrics(m, prev) {
     return `<span class="delta ${good ? 'up' : 'down'}"><bdi>${d > 0 ? '+' : ''}${d}${unit}</bdi></span>`;
   };
   const tiles = [
-    [icon('temp'), n(m.gpuTempMax, '°'), t('ses.gpuPeak'), delta(m.gpuTempMax, prev?.gpuTempMax, '°'), m.gpuTempMax >= 85 ? 'warn' : ''],
-    [icon('gpu'), n(m.gpuThermalLimitedPct, '%'), t('ses.heldBack'), delta(m.gpuThermalLimitedPct, prev?.gpuThermalLimitedPct, '%'), m.gpuThermalLimitedPct >= 15 ? 'warn' : ''],
-    [icon('gpu'), n(m.gpuUtil, '%'), t('ses.gpuLoad'), '', ''],
+    [icon('temp'), n(m.gpuTempMax, '°'), t('ses.gpuPeak'), delta(m.gpuTempMax, prev?.gpuTempMax, '°'), m.gpuTempMax >= 92 ? 'warn' : ''],
+    [icon('gpu'), n(m.gpuThermalLimitedPct, '%'), t('ses.atLimit'), delta(m.gpuThermalLimitedPct, prev?.gpuThermalLimitedPct, '%'), ''],
+    [icon('gpu'), n(heatCost(m), '%'), t('ses.heatCost'), '', heatCost(m) >= 5 ? 'warn' : ''],
+    [icon('gpu'), n(m.gpuUtil, '%'), t('ses.gpuLoad'), finite(m.gpuBusyPct) && m.gpuBusyPct >= 1 ? `<span class="delta"><bdi>${t('ses.maxed', { pct: Math.round(m.gpuBusyPct) })}</bdi></span>` : '', ''],
+    [icon('gpu'), n(m.gpuClock), t('ses.gpuClock'), '', (lowClock(m) ?? 0) >= 30 ? 'warn' : ''],
     [icon('chip'), finite(m.cpuMhzAvg) ? `${ghz(m.cpuMhzAvg)}` : '—', t('ses.cpuSpeed'), finite(m.cpuMhzLow) ? `<span class="delta"><bdi>${t('ses.low', { v: ghz(m.cpuMhzLow) })}</bdi></span>` : '', ''],
     [icon('chip'), n(m.cpuSamples === 0 ? null : m.busiestCoreAvg, '%'), t('ses.core'), '', m.busiestCoreAvg >= 85 ? 'warn' : ''],
     [icon('wifi'), m.router ? n(m.router.medianMs, '') : '—', t('ses.router'), m.router ? `<span class="delta ${m.router.spikes ? 'down' : ''}"><bdi>${t('ses.spikes', { n: m.router.spikes })}</bdi></span>` : '', m.router?.spikes ? 'warn' : ''],

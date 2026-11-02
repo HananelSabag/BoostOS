@@ -30,12 +30,18 @@ internal sealed class Agent : ApplicationContext
     {
         using var single = new Mutex(true, MutexName, out var first);
         if (!first) return 0;
+        Log.Role = "recorder";
         // A game session left half-done by a crash or a shutdown: put the PC back once nothing is running.
-        try { if (GameMode.IsActive && GameLibrary.Running() is null) GameMode.Restore(LastNet()); } catch { }
+        try { if (GameMode.IsActive && GameLibrary.Running() is null) GameMode.Restore(LastNet()); }
+        catch (Exception ex) { Log.Error("restoring a session left half-done", ex); }
         var settings = AppSettings.Load();
         if (!settings.BackgroundRecorder) return 0;
+        Log.Write($"started, version {Application.ProductVersion.Split('+')[0]}");
         Sync(settings); // keeps the start-with-Windows entry pointing at this copy
+        try { MatchStore.Recover(gpuMaxClock: Diagnostics.GpuCheck.MaxClock); }
+        catch (Exception ex) { Log.Error("recovering sessions", ex); }
         Application.Run(new Agent());
+        Log.Write("stopped");
         return 0;
     }
 
@@ -52,7 +58,7 @@ internal sealed class Agent : ApplicationContext
                 if (!settings.BackgroundRecorder && watcher.Current is null) { ExitThread(); return; }
                 await Task.Run(watcher.Tick);
             }
-            catch (Exception ex) { Debug.WriteLine(ex); }
+            catch (Exception ex) { Log.Error("watching for games", ex); }
             finally { busy = false; }
         };
         timer.Start();
@@ -98,6 +104,6 @@ internal sealed class Agent : ApplicationContext
             if (settings.BackgroundRecorder && !IsRunning())
                 Process.Start(new ProcessStartInfo(exe, "--agent") { UseShellExecute = false, CreateNoWindow = true })?.Dispose();
         }
-        catch (Exception ex) { Debug.WriteLine(ex); }
+        catch (Exception ex) { Log.Error("registering the recorder", ex); }
     }
 }

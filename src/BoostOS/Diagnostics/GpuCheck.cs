@@ -144,6 +144,14 @@ internal static class GpuCheck
             checks.Add(new(title, $"{L("נח", "Resting")} · {now}", Ok, null, Fixes.Ref("nvidia-global-power")));
     }
 
+    /// <summary>The card's top graphics clock in MHz, or null without an NVIDIA card.</summary>
+    internal static double? MaxClock()
+    {
+        var smi = FindNvidiaSmi();
+        var line = smi is null ? null : Shell.Run(smi, "--query-gpu=clocks.max.graphics --format=csv,noheader,nounits")?.Split('\n')[0].Trim();
+        return double.TryParse(line, NumberStyles.Float, CultureInfo.InvariantCulture, out var mhz) && mhz > 0 ? mhz : null;
+    }
+
     private static string? FindNvidiaSmi()
     {
         string[] candidates =

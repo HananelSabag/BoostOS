@@ -50,12 +50,16 @@ internal sealed class GameWatcher : IDisposable
                     if (s.GameModeOnPlay && !GameMode.IsActive)
                         applied = GameMode.Apply(periodicWifiSpikes(), running.Store, running.Processes);
                     if (s.TrackMatches) recorder ??= new MatchRecorder(GameMode.IsActive, running);
+                    Log.Write($"{running.Name} started: {(recorder is null ? "not recording" : "recording")}, Game Mode {(GameMode.IsActive ? "on" : "off")}");
                 }
                 Started?.Invoke(running, applied);
             }
             else if (!OwnsSession && TryOwn() && settings().TrackMatches)
+            {
                 // The copy that owned this session closed mid-game: take over, so Game Mode still gets put back.
                 recorder ??= new MatchRecorder(GameMode.IsActive, running);
+                Log.Write($"{running.Name}: took over the session from the copy that closed");
+            }
             if (OwnsSession && GameMode.IsActive && DateTime.UtcNow - lastQuiet > TimeSpan.FromSeconds(60))
             {
                 lastQuiet = DateTime.UtcNow;
@@ -74,19 +78,26 @@ internal sealed class GameWatcher : IDisposable
         if (recorder is { } r)
         {
             recorder = null;
-            try
+            try { report = r.Finish(); }
+            catch (Exception ex) { error = ex; Log.Error("finishing the recording", ex); try { r.Dispose(); } catch { } }
+            if (report is not null)
             {
-                report = r.Finish();
-                MatchStore.Add(report);
+                Log.Write($"{game.Name} closed after {report.Minutes} min, archive {report.TelemetryFile ?? "not saved"}");
+                try { MatchStore.Add(report); }
+                catch (Exception ex)
+                {
+                    error = ex;
+                    Log.Error("adding the session to the list", ex);
+                    try { MatchStore.Recover(); } catch (Exception again) { Log.Error("recovering from the archive", again); }
+                }
             }
-            catch (Exception ex) { error = ex; try { r.Dispose(); } catch { } }
         }
         GameModeStatus? restored = null;
         // Recheck: another game may already be running (back-to-back sessions keep Game Mode on).
         if (GameLibrary.Running() is null && GameMode.IsActive)
         {
             try { restored = GameMode.Restore(periodicWifiSpikes()); }
-            catch (Exception ex) { error ??= ex; }
+            catch (Exception ex) { error ??= ex; Log.Error("restoring after Game Mode", ex); }
         }
         Release();
         Finished?.Invoke(new(game, true, report, restored, error));
