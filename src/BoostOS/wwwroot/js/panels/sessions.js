@@ -19,7 +19,7 @@ const panel = {
       const item = e.target.closest('[data-ses]');
       if (item && Number(item.dataset.ses) !== selected) {
         selected = Number(item.dataset.ses);
-        $('#ses-list', root).dataset.key = `${(ctx.app.matches ?? []).length}|${ctx.app.matches?.[0]?.start}|${ctx.app.games.length}|${selected}`;
+        $('#ses-list', root).dataset.key = `${(ctx.app.matches ?? []).length}|${ctx.app.matches?.[0]?.start}|${ctx.app.games.length}|${selected}|${ctx.app.summary?.main?.text ?? ''}`;
         renderDetail();
         markSelected();
       }
@@ -35,7 +35,7 @@ const panel = {
     const list = ctx.app.matches ?? [];
     if (selected >= list.length) selected = 0;
     // Redraw only when the sessions (or the art for them) changed, and keep the focus where it was.
-    const key = `${list.length}|${list[0]?.start}|${ctx.app.games.length}|${selected}`;
+    const key = `${list.length}|${list[0]?.start}|${ctx.app.games.length}|${selected}|${ctx.app.summary?.main?.text ?? ''}`;
     const box = $('#ses-list', root);
     if (box.dataset.key === key) return;
     box.dataset.key = key;
@@ -43,7 +43,7 @@ const panel = {
     const focused = document.activeElement?.closest?.('[data-ses]')?.dataset.ses;
     box.innerHTML = list.length ? list.map((m, i) => {
       const game = gameOf(m);
-      const worst = insights(m).find(x => x[0] !== 'ok')?.[0] ?? 'ok';
+      const worst = (m.findings ?? []).find(f => f.status !== 'ok')?.status ?? 'ok';
       return `<button class="ses-item s-${worst}" data-nav data-ses="${i}"${i === 0 ? ' data-default' : ''} aria-current="${i === selected}">
         <span class="ses-thumb">${gameArt(game, { logo: false })}</span>
         <span class="ses-text"><b>${esc(m.gameName ?? game?.name ?? 'Rocket League')}</b>
@@ -75,7 +75,7 @@ function renderDetail() {
     return;
   }
   const prev = list.slice(selected + 1).find(x => (x.gameId ?? 'epic:Sugar') === (m.gameId ?? 'epic:Sugar'));
-  const notes = insights(m);
+  const notes = m.findings ?? [];
   box.innerHTML = `
     <header class="ses-head">
       <h3>${esc(m.gameName ?? gameOf(m)?.name ?? 'Rocket League')}</h3>
@@ -83,7 +83,7 @@ function renderDetail() {
     </header>
     <section class="card ses-notes" data-nav tabindex="0">
       <h4>${t('ses.learned')}</h4>
-      <ul>${notes.map(([s, text, tip], i) => `<li class="s-${s}"><span class="dot"></span><span>${esc(text)}${tip && i === 0 && s !== 'ok' ? `<small>${esc(tip)}</small>` : ''}</span></li>`).join('')}</ul>
+      <ul>${notes.map(f => `<li class="s-${f.status}"><span class="dot"></span><span>${esc(f.text)}${f.tip && f.status !== 'ok' ? `<small>${esc(f.tip)}</small>` : ''}</span></li>`).join('')}</ul>
     </section>
     <section class="ses-metrics" data-nav tabindex="0">${metrics(m, prev)}</section>
     ${charts(m)}
@@ -101,28 +101,9 @@ function renderSummary(list) {
   if (list.length < 2) { box.hidden = true; return; }
   box.hidden = false;
   const minutes = of(list, m => m.minutes).reduce((a, b) => a + b, 0);
-  const thermal = avg(of(list, m => m.gpuThermalLimitedPct));
-  const cost = avg(of(list, heatCost));
-  const peak = Math.max(...of(list, m => m.gpuTempMax), 0);
-  const held = list.filter(m => (lowClock(m) ?? 0) >= 30);
-  const routers = list.map(m => m.router).filter(Boolean);
-  const spikesPerHour = routers.length ? routers.reduce((a, r) => a + r.spikes, 0) / Math.max(1, of(list.filter(m => m.router), m => m.minutes).reduce((a, b) => a + b, 0)) * 60 : null;
-  const routerMs = avg(routers.map(r => r.medianMs).filter(finite));
-  const cpuGhz = avg(of(list, m => m.cpuMhzAvg));
-
-  // Heat counts as a problem only where it cost frames: slowed while maxed out. Sitting at the limit with power
-  // to spare is how a laptop GPU is built to run.
-  let main;
-  if (cost != null && cost >= 5) main = ['bad', t('sum.heatCost', { pct: Math.round(cost), peak: Math.round(peak) }), t('ins.thermalTip')];
-  else if (held.length) main = ['warn', t('sum.held', { n: held.length, total: list.length, mhz: Math.round(avg(of(held, m => m.gpuClock)) ?? 0) }), t('ins.gpuHeldTip')];
-  else if (spikesPerHour != null && spikesPerHour > 12) main = ['warn', t('sum.wifi', { n: Math.round(spikesPerHour) }), t('ins.wifiTip')];
-  else main = ['ok', t('sum.none'), ''];
-
-  const good = [];
-  if (thermal != null && thermal >= 15 && (cost ?? 0) < 5) good.push(t('sum.goodHeat', { peak: Math.round(peak) }));
-  if (routerMs != null && (spikesPerHour ?? 0) <= 12) good.push(t('sum.goodWifi', { ms: Math.round(routerMs), n: Math.round(spikesPerHour ?? 0) }));
-  if (cpuGhz != null) good.push(t('sum.goodCpu', { ghz: (cpuGhz / 1000).toFixed(1) }));
-  if (list.some(m => m.background) && !list.some(m => (m.background ?? []).some(a => !SYSTEM.has(a.name) && a.cpuPct >= 3))) good.push(t('sum.goodBg'));
+  // The judgment (the one thing to fix first, what is fine) comes from the host, the same rules as the scan.
+  const main = ctx.app.summary?.main ?? { status: 'ok', text: '' };
+  const good = ctx.app.summary?.good ?? [];
 
   // Game Mode: compare when both kinds exist, otherwise say what would make the comparison possible.
   const withGm = list.filter(m => m.gameMode), without = list.filter(m => !m.gameMode);
@@ -135,14 +116,14 @@ function renderSummary(list) {
   // cost (red: frames lost to heat; amber: the clock was held down by something else).
   const bars = [...list].reverse().map(m => {
     const v = finite(m.gpuThermalLimitedPct) ? m.gpuThermalLimitedPct : 0;
-    const c = heatCost(m) ?? 0;
-    return `<span class="${c >= 15 ? 's-bad' : c >= 5 || (lowClock(m) ?? 0) >= 30 ? 's-warn' : 's-ok'}" style="--v:${Math.max(4, v)}%" title="${Math.round(v)}%"></span>`;
+    const c = m.heatCost ?? 0;
+    return `<span class="${c >= 15 ? 's-bad' : c >= 5 || m.held ? 's-warn' : 's-ok'}" style="--v:${Math.max(4, v)}%" title="${Math.round(v)}%"></span>`;
   }).join('');
 
   box.innerHTML = `
     <div class="sum-head"><h3>${t('sum.title', { n: list.length })}</h3><span>${t('sum.hours', { h: (minutes / 60).toFixed(1) })}</span></div>
     <div class="sum-body">
-      <div class="sum-main s-${main[0]}"><span class="dot"></span><div><b>${esc(main[1])}</b>${main[2] ? `<small>${esc(main[2])}</small>` : ''}</div></div>
+      <div class="sum-main s-${main.status}"><span class="dot"></span><div><b>${esc(main.text)}</b>${main.tip ? `<small>${esc(main.tip)}</small>` : ''}</div></div>
       <figure class="sum-bars" dir="ltr" aria-label="${esc(t('sum.barsLabel'))}"><div>${bars}</div><figcaption>${t('sum.barsLabel')}</figcaption></figure>
     </div>
     ${good.length ? `<p class="sum-good">${icon('check')}${good.map(esc).join(' · ')}</p>` : ''}
@@ -151,7 +132,6 @@ function renderSummary(list) {
 
 // ---- What it means ----
 
-const SYSTEM = new Set(['system', 'dwm', 'svchost', 'audiodg', 'csrss', 'lsass', 'services', 'wininit', 'smss', 'fontdrvhost', 'boostos', 'msedgewebview2', 'nvidia-smi', 'conhost', 'interrupts']);
 const NAMES = {
   chrome: 'Chrome', msedge: 'Edge', msedgewebview2: 'WebView2', discord: 'Discord', spotify: 'Spotify', onedrive: 'OneDrive',
   steam: 'Steam', steamwebhelper: 'Steam', epicgameslauncher: 'Epic Games Launcher', epicwebhelper: 'Epic Games Launcher',
@@ -164,67 +144,6 @@ const NAMES = {
 export const appName = n => NAMES[n] ?? n;
 
 const ghz = mhz => (mhz / 1000).toFixed(1);
-const after = s => s < 90 ? t('ins.sec', { n: Math.round(s) }) : t('ins.min', { n: (s / 60).toFixed(1) });
-
-/**
- * Share of the session the card was slowed by heat while maxed out: the only heat that costs frames. Reports from
- * before schema 4 estimate it from their timeline.
- */
-export function heatCost(m) {
-  if (finite(m.gpuThermalBusyPct)) return m.gpuThermalBusyPct;
-  const points = Array.isArray(m.timeline) ? m.timeline.filter(p => finite(p?.gpuUtil) && finite(p?.clockReasons)) : [];
-  if (!points.length) return null;
-  return 100 * points.filter(p => p.gpuUtil >= 90 && (p.clockReasons & 0x60)).length / points.length;
-}
-
-/** Share of the session the card worked hard at under half its top clock (schema 4 only). */
-const lowClock = m => finite(m.gpuLowClockPct) ? m.gpuLowClockPct : null;
-
-/** [status, text, tip?] lines, worst first. Numbers only; the words come from the interface language. */
-export function insights(m) {
-  const out = [];
-  const thermal = m.gpuThermalLimitedPct, temp = m.gpuTempMax, cost = heatCost(m);
-  if (finite(cost) && cost >= 5)
-    out.push([cost >= 15 ? 'bad' : 'warn', t('ins.heatCost', { pct: Math.round(cost), temp: Math.round(temp ?? 0) }), t('ins.thermalTip')]);
-  else if (finite(temp) && temp >= 92) out.push(['warn', t('ins.hot', { temp: Math.round(temp) }), t('ins.thermalTip')]);
-  else if (finite(thermal) && thermal >= 15)
-    out.push(['ok', finite(m.gpuHotAfterSec)
-      ? t('ins.atLimitAfter', { after: after(m.gpuHotAfterSec), temp: Math.round(temp ?? 0) })
-      : t('ins.atLimit', { temp: Math.round(temp ?? 0), pct: Math.round(thermal) })]);
-  else if (finite(temp)) out.push(['ok', t('ins.cool', { temp: Math.round(temp) })]);
-
-  if ((lowClock(m) ?? 0) >= 30)
-    out.push(['warn', `${t('ins.gpuHeld', { mhz: Math.round(m.gpuClock ?? 0), util: Math.round(m.gpuUtil ?? 0) })}${finite(m.gpuPowerLimitAvg) ? ` ${t('ins.gpuLimitW', { w: Math.round(m.gpuPowerLimitAvg) })}` : ''}`, t('ins.gpuHeldTip')]);
-
-  if (finite(m.gpuPowerLimitedPct) && m.gpuPowerLimitedPct >= 30) out.push(['info', t('ins.power', { pct: Math.round(m.gpuPowerLimitedPct) }), t('ins.powerTip')]);
-
-  if (finite(m.gpuUtil)) {
-    if (m.gpuUtil >= 90) out.push(['warn', t('ins.gpuBound', { pct: Math.round(m.gpuUtil) }), t('ins.gpuBoundTip')]);
-    else if (m.gpuUtil < 70) out.push(['ok', t('ins.gpuHeadroom', { pct: Math.round(m.gpuUtil) })]);
-  }
-  if (m.cpuSamples !== 0 && finite(m.busiestCoreAvg) && m.busiestCoreAvg >= 85) out.push(['warn', t('ins.cpuBound', { pct: Math.round(m.busiestCoreAvg) }), t('ins.cpuBoundTip')]);
-  if (finite(m.cpuMhzAvg) && finite(m.cpuMhzLow)) {
-    if (m.cpuMhzLow < m.cpuMhzAvg * 0.75) out.push(['warn', t('ins.cpuDips', { low: ghz(m.cpuMhzLow), avg: ghz(m.cpuMhzAvg) }), t('ins.cpuDipsTip')]);
-    else out.push(['ok', t('ins.cpuSteady', { avg: ghz(m.cpuMhzAvg) })]);
-  }
-
-  const r = m.router;
-  if (r && finite(r.medianMs)) {
-    if (r.spikes > 0 || r.lossPct >= 1) out.push(['warn', t('ins.wifiSpikes', { n: r.spikes, loss: r.lossPct, ms: Math.round(r.medianMs) }), t('ins.wifiTip')]);
-    else out.push(['ok', t('ins.wifiSteady', { ms: Math.round(r.medianMs), max: Math.round(r.maxMs ?? r.medianMs) })]);
-  }
-  if (m.internet && m.internet.lossPct >= 2) out.push(['warn', t('ins.netLoss', { loss: m.internet.lossPct })]);
-  if (m.wifi && finite(m.wifi.qualityMin) && m.wifi.qualityMin < 50) out.push(['warn', t('ins.wifiWeak', { min: m.wifi.qualityMin })]);
-  if (finite(m.ramMaxPct) && m.ramMaxPct >= 90) out.push(['warn', t('ins.ram', { pct: Math.round(m.ramMaxPct) }), t('ins.ramTip')]);
-
-  const busy = (m.background ?? []).filter(a => !SYSTEM.has(a.name));
-  if (busy[0] && busy[0].cpuPct >= 2) out.push(['warn', t('ins.bg', { name: appName(busy[0].name), pct: busy[0].cpuPct.toFixed(1) }), t('ins.bgTip')]);
-  else if (m.background) out.push(['ok', t('ins.bgQuiet')]);
-
-  if (m.schemaVersion < 3 && !out.some(x => x[0] !== 'ok')) out.push(['info', t('ins.oldReport')]);
-  const rank = { bad: 0, warn: 1, info: 2, ok: 3 };
-  return out.sort((a, b) => rank[a[0]] - rank[b[0]]);
-}
 
 // ---- The numbers ----
 
@@ -240,9 +159,9 @@ function metrics(m, prev) {
   const tiles = [
     [icon('temp'), n(m.gpuTempMax, '°'), t('ses.gpuPeak'), delta(m.gpuTempMax, prev?.gpuTempMax, '°'), m.gpuTempMax >= 92 ? 'warn' : ''],
     [icon('gpu'), n(m.gpuThermalLimitedPct, '%'), t('ses.atLimit'), delta(m.gpuThermalLimitedPct, prev?.gpuThermalLimitedPct, '%'), ''],
-    [icon('gpu'), n(heatCost(m), '%'), t('ses.heatCost'), '', heatCost(m) >= 5 ? 'warn' : ''],
+    [icon('gpu'), n(m.heatCost, '%'), t('ses.heatCost'), '', m.heatCost >= 5 ? 'warn' : ''],
     [icon('gpu'), n(m.gpuUtil, '%'), t('ses.gpuLoad'), finite(m.gpuBusyPct) && m.gpuBusyPct >= 1 ? `<span class="delta"><bdi>${t('ses.maxed', { pct: Math.round(m.gpuBusyPct) })}</bdi></span>` : '', ''],
-    [icon('gpu'), n(m.gpuClock), t('ses.gpuClock'), '', (lowClock(m) ?? 0) >= 30 ? 'warn' : ''],
+    [icon('gpu'), n(m.gpuClock), t('ses.gpuClock'), '', m.held ? 'warn' : ''],
     [icon('chip'), finite(m.cpuMhzAvg) ? `${ghz(m.cpuMhzAvg)}` : '—', t('ses.cpuSpeed'), finite(m.cpuMhzLow) ? `<span class="delta"><bdi>${t('ses.low', { v: ghz(m.cpuMhzLow) })}</bdi></span>` : '', ''],
     [icon('chip'), n(m.cpuSamples === 0 ? null : m.busiestCoreAvg, '%'), t('ses.core'), '', m.busiestCoreAvg >= 85 ? 'warn' : ''],
     [icon('wifi'), m.router ? n(m.router.medianMs, '') : '—', t('ses.router'), m.router ? `<span class="delta ${m.router.spikes ? 'down' : ''}"><bdi>${t('ses.spikes', { n: m.router.spikes })}</bdi></span>` : '', m.router?.spikes ? 'warn' : ''],

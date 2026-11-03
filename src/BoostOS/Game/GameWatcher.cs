@@ -78,7 +78,7 @@ internal sealed class GameWatcher : IDisposable
         if (recorder is { } r)
         {
             recorder = null;
-            try { report = r.Finish(); }
+            try { report = r.Finish(GameMode.IsActive ? rep => rep with { GameModeActions = GameMode.Actions() } : null); }
             catch (Exception ex) { error = ex; Log.Error("finishing the recording", ex); try { r.Dispose(); } catch { } }
             if (report is not null)
             {

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Globalization;
+using BoostOS.Network;
 
 namespace BoostOS.Game;
 
@@ -20,6 +21,9 @@ public sealed record MatchSample(double GpuUtil, double GpuTemp, double GpuClock
     public int? WifiRssi { get; init; }
     public double? WifiRxMbps { get; init; }
     public double? GpuPowerLimit { get; init; }
+    public int? CpuTemp { get; init; }
+    public int? FanDuty { get; init; }
+    public bool? OnBattery { get; init; }
 }
 
 /// <summary>Ping results for one target during the session (the warm-up excluded).</summary>
@@ -74,6 +78,24 @@ public sealed record MatchReport(
     public double? GpuHotAfterSec { get; init; }
     /// <summary>Rebuilt from its archive because the summary never reached the list.</summary>
     public bool Recovered { get; init; }
+
+    // Schema 5: the facts advice depends on, kept with the session so it is judged by what was true while you played.
+    /// <summary>The connection when the game started: Wi-Fi link, Ethernet port, Bluetooth sound or controllers.</summary>
+    public NetFacts? Net { get; init; }
+    /// <summary>The Wi-Fi link when the game closed (a different access point or band means it roamed mid-game).</summary>
+    public WifiLink? WifiAtEnd { get; init; }
+    /// <summary>"boostos", "high", "balanced-best", "balanced", "saver" or "other".</summary>
+    public string? PowerPlan { get; init; }
+    public double? CpuTempMax { get; init; }
+    public double? CpuTempAvg { get; init; }
+    /// <summary>The faster of the two fans, as a share of full speed, averaged over the session.</summary>
+    public double? FanDutyAvg { get; init; }
+    public double? OnBatteryPct { get; init; }
+    /// <summary>The card's own power limit and its ceiling with Dynamic Boost: the enforced limit tells the laptop's mode.</summary>
+    public double? GpuPowerDefault { get; init; }
+    public double? GpuPowerMax { get; init; }
+    /// <summary>What Game Mode closed and quieted during this session.</summary>
+    public IReadOnlyList<string>? GameModeActions { get; init; }
 }
 
 public sealed record SessionPoint(double Seconds, double? GpuTemp, double? GpuUtil, ulong? ClockReasons)
@@ -94,6 +116,9 @@ public sealed record RecordedSample(DateTimeOffset At, double Seconds, string? G
     public int? WifiQuality { get; init; }
     public int? WifiRssi { get; init; }
     public double? GpuPowerLimit { get; init; }
+    public int? CpuTemp { get; init; }
+    public int? FanDuty { get; init; }
+    public bool? OnBattery { get; init; }
 }
 
 public sealed record SessionRecording(int SchemaVersion, DateTimeOffset Start, DateTimeOffset End,
@@ -176,7 +201,7 @@ internal static class SessionSummary
             util, Avg(s => s.GpuTemp), Max(s => s.GpuTemp), Avg(s => s.GpuClock), Avg(s => s.GpuPower), limited,
             Avg(s => s.Cpu, cpu) ?? 0, busiest, bottleneck)
         {
-            SchemaVersion = 4,
+            SchemaVersion = 5,
             CpuMhzAvg = clocks.Count == 0 ? null : Math.Round(clocks.Average()),
             CpuMhzLow = lows.Count == 0 ? null : lows[(int)(lows.Count * 0.05)], // 5th percentile: the slow moments
             GpuThermalBusyPct = thermalBusy,
@@ -186,6 +211,11 @@ internal static class SessionSummary
             GpuPowerLimitAvg = AvgOf(s => s.GpuPowerLimit),
             GpuHotAfterSec = samples.FirstOrDefault(s => s.Seconds is not null && s.GpuTemp >= HotTemp)?.Seconds is { } hot
                 ? Math.Round(hot) : null,
+            CpuTempMax = MaxOf(s => s.CpuTemp),
+            CpuTempAvg = AvgOf(s => s.CpuTemp),
+            FanDutyAvg = AvgOf(s => s.FanDuty),
+            OnBatteryPct = play.Count(s => s.OnBattery is not null) is var known and > 0
+                ? Math.Round(100d * play.Count(s => s.OnBattery == true) / known, 1) : null,
             RamMaxPct = MaxOf(s => s.RamPct),
             VramMaxMb = MaxOf(s => s.VramMb),
             Wifi = wifi.Count == 0 ? null : new WifiStats(AvgOf(s => s.WifiQuality), wifi.Min(s => s.WifiQuality),
@@ -260,6 +290,7 @@ internal static class SessionSummary
             {
                 CpuMhz = s.CpuMhz, RamPct = s.RamPct, VramMb = s.VramMb, RouterMs = s.RouterMs, InternetMs = s.InternetMs,
                 WifiQuality = s.WifiQuality, WifiRssi = s.WifiRssi, GpuPowerLimit = s.GpuPowerLimit,
+                CpuTemp = s.CpuTemp, FanDuty = s.FanDuty, OnBattery = s.OnBattery,
             }).ToList());
 
     /// <summary>The summary of an archive that has none inside (archives from before schema 4).</summary>
@@ -272,6 +303,7 @@ internal static class SessionSummary
             At = s.At, Seconds = s.Seconds, ClockReasons = s.ClockReasons, GpuId = s.GpuId, GpuObservedAt = s.GpuObservedAt,
             CpuAvailable = s.Cpu is not null, CpuMhz = s.CpuMhz, RamPct = s.RamPct, VramMb = s.VramMb, RouterMs = s.RouterMs,
             InternetMs = s.InternetMs, WifiQuality = s.WifiQuality, WifiRssi = s.WifiRssi, GpuPowerLimit = s.GpuPowerLimit,
+            CpuTemp = s.CpuTemp, FanDuty = s.FanDuty, OnBattery = s.OnBattery,
         }).ToList();
         return Build(recording.Start.LocalDateTime, recording.End.LocalDateTime, recording.GameMode, samples, gpuMaxClock)
             with { TelemetryTruncated = recording.Truncated };
@@ -284,6 +316,8 @@ internal sealed record GpuReading(double Util, double Temp, double Clock, double
     public double? VramTotalMb { get; init; }
     public double? PowerLimit { get; init; }
     public double? MaxClock { get; init; }
+    public double? PowerDefault { get; init; }
+    public double? PowerMax { get; init; }
 }
 
 /// <summary>One GPU for the entire session; a missing/stale value never means zero utilization or no limiting.</summary>
@@ -297,7 +331,7 @@ internal sealed class GpuSampleStream
     {
         if (ended || string.IsNullOrWhiteSpace(line)) return false;
         var values = line.Split(',').Select(s => s.Trim()).ToArray();
-        if (values.Length is not (6 or 8 or 10) || !(values[0].StartsWith("GPU-", StringComparison.Ordinal)
+        if (values.Length is not (6 or 8 or 10 or 12) || !(values[0].StartsWith("GPU-", StringComparison.Ordinal)
             || values[0].StartsWith("MIG-", StringComparison.Ordinal))) return false;
         SelectedId ??= values[0];
         if (!string.Equals(SelectedId, values[0], StringComparison.Ordinal)) return false;
@@ -312,8 +346,10 @@ internal sealed class GpuSampleStream
         {
             VramMb = values.Length >= 8 ? SessionSummary.Finite(Number(6)) : null,
             VramTotalMb = values.Length >= 8 ? SessionSummary.Finite(Number(7)) : null,
-            PowerLimit = values.Length == 10 ? SessionSummary.Finite(Number(8)) : null,
-            MaxClock = values.Length == 10 ? SessionSummary.Finite(Number(9)) : null,
+            PowerLimit = values.Length >= 10 ? SessionSummary.Finite(Number(8)) : null,
+            MaxClock = values.Length >= 10 ? SessionSummary.Finite(Number(9)) : null,
+            PowerDefault = values.Length == 12 ? SessionSummary.Finite(Number(10)) : null,
+            PowerMax = values.Length == 12 ? SessionSummary.Finite(Number(11)) : null,
         };
         return true;
     }

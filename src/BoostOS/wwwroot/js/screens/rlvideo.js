@@ -36,7 +36,7 @@ const screen = {
           <button class="btn primary" data-nav id="vid-save" data-sfx="none"></button>
           <button class="btn" data-nav id="vid-suggest">${icon('star')}${t('vid.suggest')}</button>
           <button class="btn" data-nav id="vid-undo" data-sfx="none">${icon('undo')}${t('vid.undo')}</button>
-          <p class="note">${t('vid.fps')}</p>
+          <p class="note" id="vid-fps"></p>
         </aside>
       </div>`;
     $('.back', root).addEventListener('click', () => ctx.back());
@@ -128,6 +128,9 @@ function paint() {
   $('#vid-undo', root).hidden = !s?.changed;
   $('#vid-undo', root).disabled = running || saving;
   $('#vid-suggest', root).disabled = running || saving;
+  // Max FPS lives in the game; what to pick depends on this screen and on the driver's own cap.
+  $('#vid-fps', root).textContent = s?.cap ? t('vid.fpsCapped', { hz: s.hz ?? '?', cap: s.cap })
+    : s?.hz ? t('vid.fps', { hz: s.hz }) : '';
   const last = ctx.app.matches?.find(m => !m.gameId || m.gameId === 'epic:Sugar' || m.gameId === 'steam:252950');
   $('#vid-advice', root).innerHTML = running
     ? `<h3>${t('vid.closeFirst')}</h3><p>${t('vid.closeFirstText')}</p>`

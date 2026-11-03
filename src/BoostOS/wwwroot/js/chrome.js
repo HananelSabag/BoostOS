@@ -36,7 +36,9 @@ export function onGameMode(status) {
   if (!wasPending) return;
   const done = (status.steps ?? []).filter(s => s.result === 'done').length;
   const failed = (status.steps ?? []).filter(s => s.result === 'failed');
+  const notice = (status.steps ?? []).find(s => s.result === 'notice');
   if (failed.length) { sfx.error(); toast(`${failed[0].title}: ${failed[0].detail}`); }
+  else if (status.active && notice) toast(`${notice.title}: ${notice.detail}`); // something only you can change, before the match
   else toast(status.active ? t('gm.onToast', { n: done }) : t('gm.offToast'));
 }
 
@@ -52,8 +54,11 @@ export function renderPill() {
   pill.setAttribute('aria-pressed', String(active));
   pill.innerHTML = `${icon('rocket')}<span class="gm-name">${t('gm.name')}</span>
     <span class="gm-state">${pending ? '<span class="spinner"></span>' : `<span class="gm-dot"></span>${active ? t('gm.on') : t('gm.off')}`}</span>`;
+  // Failures and notices (things only the player can change) come first, so they make the short list.
+  const order = { failed: 0, notice: 1 };
   const lines = active
-    ? (s.steps ?? []).filter(x => x.result !== 'skipped').map(x => [x.result === 'failed' ? 's-bad' : 's-ok', `${x.title}: ${x.detail}`])
+    ? (s.steps ?? []).filter(x => x.result !== 'skipped').sort((a, b) => (order[a.result] ?? 2) - (order[b.result] ?? 2))
+      .map(x => [x.result === 'failed' ? 's-bad' : x.result === 'notice' ? 's-warn' : 's-ok', `${x.title}: ${x.detail}`])
     : (s?.plan ?? []).filter(x => x.willRun).map(x => ['s-ok', `${x.title}: ${x.detail}`]);
   if (!lines.length) lines.push(['s-idle', t('gm.nothing')]);
   $('#gm-flyout').innerHTML = `<b>${active ? t('gm.didTitle') : t('gm.willTitle')}</b>

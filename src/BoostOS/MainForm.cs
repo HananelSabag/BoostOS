@@ -189,7 +189,7 @@ internal sealed class MainForm : Form
             switch (cmd)
             {
                 case "hello":
-                    Post("hello", new { settings, version = Application.ProductVersion.Split('+')[0], matches = MatchStore.Load(), gameMode = GameMode.Status(periodicWifiSpikes), fixesApplied = Fixes.Applied().Count });
+                    Post("hello", new { settings, version = Application.ProductVersion.Split('+')[0], matches = SessionFindings.Payload(MatchStore.Load()), gameMode = GameMode.Status(periodicWifiSpikes), fixesApplied = Fixes.Applied().Count });
                     if (startupRecoveryError is { } recoveryError)
                     {
                         startupRecoveryError = null;
@@ -198,7 +198,7 @@ internal sealed class MainForm : Form
                     Post("games", await Task.Run(() => GameLibrary.List(refresh: true)));
                     // Sessions whose summary never reached the list come back from their archives.
                     if (await Task.Run(() => MatchStore.Recover(gpuMaxClock: Diagnostics.GpuCheck.MaxClock)) > 0)
-                        Post("matches", MatchStore.Load());
+                        Post("matches", SessionFindings.Payload(MatchStore.Load()));
                     break;
 
                 case "games":
@@ -304,7 +304,7 @@ internal sealed class MainForm : Form
                     break;
 
                 case "matches":
-                    Post("matches", MatchStore.Load());
+                    Post("matches", SessionFindings.Payload(MatchStore.Load()));
                     break;
 
                 case "toggleFullscreen":
@@ -414,7 +414,11 @@ internal sealed class MainForm : Form
             }
         }
         Post("gameMode", GameMode.Status(periodicWifiSpikes));
-        if (report is { Minutes: >= 1 }) Post("matchReport", new { report, previous = MatchStore.Load().Skip(1).FirstOrDefault() });
+        if (report is { Minutes: >= 1 })
+        {
+            Post("matchReport", new { report = SessionFindings.Annotate(report, Network.NetFacts.RecentOrNull()) });
+            Post("matches", SessionFindings.Payload(MatchStore.Load()));
+        }
         if (e.Restored is { } status)
             Post("notice", new { message = status.Active
                 ? I18n.L("המשחק נסגר. חלק מהשינויים עדיין ממתינים לשחזור; אפשר לנסות שוב בלחצן השחזור.", "The game closed. Some changes still need recovery; use the restore button to retry.")

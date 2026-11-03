@@ -17,6 +17,8 @@ internal static class Scanner
         ("background", "layers", BackgroundCheck.Run),
         ("input", "gamepad", InputCheck.Run),
         ("storage", "disk", StorageCheck.Run),
+        // What really happened while you played, judged by the same rules as the Game data tab.
+        ("play", "chart", _ => Game.SessionFindings.PlaySection(Game.MatchStore.Load(), Network.NetFacts.Recent())),
     ];
 
     /// <summary>Runs every check in parallel. A check that throws becomes a single "couldn't read" line instead of failing the scan.</summary>

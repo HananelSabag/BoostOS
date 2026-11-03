@@ -8,7 +8,7 @@ namespace BoostOS.Game;
 
 public sealed record PlanItem(string Title, string Detail, bool WillRun);
 
-public sealed record StepResult(string Title, string Detail, string Result); // done | skipped | failed
+public sealed record StepResult(string Title, string Detail, string Result); // done | skipped | failed | notice (only the player can change it)
 
 public sealed record GameModeStatus(bool Active, DateTime? Since, IReadOnlyList<PlanItem> Plan, IReadOnlyList<StepResult> Steps);
 
@@ -121,6 +121,13 @@ internal static class GameMode
                 : new(L("מצב חשמל Best performance", "Best performance power mode"),
                     L("המעבד לא יוריד מהירות באמצע משחק. חוזר למצב הקודם בסוף.", "The CPU won't clock down mid-match. Goes back afterwards."), true));
 
+        plan.Add(new(L("שקט לאורך כל המשחק", "Quiet for the whole game"),
+            L("כל דקה: תוכנות שנפתחו בינתיים, וכל תוכנה שעובדת קשה ברקע (2% מהמעבד ומעלה), עוברות ל-Efficiency mode. לא נוגעים בסאונד, שיחות, הקלטה, שלטים ובווינדוס עצמו.",
+              "Every minute: apps opened meanwhile, and any app working hard in the background (2% of the CPU or more), go into efficiency mode. Sound, voice chat, recording, controllers and Windows itself are never touched."), true));
+
+        if (LaptopHeldDown() is { } held)
+            plan.Add(new(L("מצב הלפטופ", "Laptop mode"), held, true));
+
         plan.Add(periodicWifiSpikes switch
         {
             true => new(L("סריקת Wi-Fi ברקע", "Wi-Fi background scans"),
@@ -155,10 +162,19 @@ internal static class GameMode
         {
             var snap = Load();
             if (snap is null) return;
-            var added = BackgroundThrottle.Apply(gameProcesses, snap.Throttled);
-            if (added.Count == 0) return;
+            var game = gameProcesses.ToList();
+            var added = BackgroundThrottle.Apply(game, snap.Throttled);
             snap.Throttled.AddRange(added);
-            Save(snap);
+            // Then whatever was measured working hard in the background since the last look, known or not.
+            var busy = BackgroundThrottle.ApplyBusy(game, snap.Throttled);
+            snap.Throttled.AddRange(busy);
+            if (busy.Count > 0)
+            {
+                snap.Steps.Add(new(L("תוכנה עמוסה ברקע", "Busy background app"),
+                    L($"{AppList(busy.Select(t => t.Name))} עבדה קשה בזמן המשחק ועברה ל-Efficiency mode", $"{AppList(busy.Select(t => t.Name))} worked hard during the game and went into efficiency mode"), "done"));
+                Log.Write($"Game Mode quieted busy apps: {string.Join(", ", busy.Select(t => t.Name).Distinct())}");
+            }
+            if (added.Count > 0 || busy.Count > 0) Save(snap);
         }
     }
 
@@ -218,8 +234,72 @@ internal static class GameMode
             }
         }
 
+        // What only the laptop and the driver decide: say it now, before the match, when it can still be changed.
+        if (LaptopHeldDown() is { } held)
+            snap.Steps.Add(new(L("מצב הלפטופ", "Laptop mode"), held, "notice"));
+        var forRocketLeague = !gameProcesses.Any() || gameProcesses.Contains("rocketleague");
+        if (forRocketLeague && DriverProfileLost() is { } lost)
+            snap.Steps.Add(new(L("פרופיל NVIDIA", "NVIDIA profile"), lost, "notice"));
+
+        try { BackgroundThrottle.Mark(); } catch { } // the starting line for measuring busy apps during the game
         Save(snap);
         return Status(periodicWifiSpikes);
+    }
+
+    private static (string? Text, long At)? laptopCache;
+
+    /// <summary>
+    /// The GPU held to its base power instead of its Dynamic Boost ceiling: what Control Center's quieter modes do.
+    /// Null when the card has its full power (or this isn't an NVIDIA laptop). Read at most every half minute.
+    /// </summary>
+    private static string? LaptopHeldDown()
+    {
+        if (laptopCache is { } c && Environment.TickCount64 - c.At < 30_000) return c.Text;
+        string? text = null;
+        try
+        {
+            var (enforced, basePower, max) = GpuCheck.PowerLimits();
+            if (PowerCheck.GpuBelowFullPower(enforced, basePower, max) == true)
+                text = L($"הכרטיס מוגבל ל-{enforced:0}W מתוך {max:0}W: הלפטופ לא במצב Performance. ב-Control Center בחר Performance לפני שהמשחק מתחיל.",
+                    $"The GPU is held to {enforced:0} of {max:0} W: the laptop isn't in Performance mode. Choose Performance in Control Center before the game starts.");
+        }
+        catch { }
+        laptopCache = (text, Environment.TickCount64);
+        return text;
+    }
+
+    /// <summary>Rocket League's driver profile lost what BoostOS set (a driver update resets it), or null when it's fine.</summary>
+    private static string? DriverProfileLost()
+    {
+        try
+        {
+            var profile = Tuning.Nvidia.Read();
+            var capLost = Tuning.Fixes.Applied().Any(f => f.Id == "nvidia-fps-cap") && Tuning.Nvidia.ReadFrameCap() == 0;
+            if (profile is not null && Tuning.Nvidia.IsRecommended(profile) && !capLost) return null;
+            if (profile is null && !capLost) return null;
+            return L("ההגדרות של רוקט ליג בדרייבר אבדו (קורה אחרי עדכון דרייבר). באבחון → תיקונים אפשר להחזיר אותן בלחיצה.",
+                "Rocket League's driver settings were lost (it happens after a driver update). Diagnostics → Fixes puts them back in one press.");
+        }
+        catch { return null; }
+    }
+
+    /// <summary>What Game Mode did this session, for the session's report. Read before Restore clears it.</summary>
+    public static List<string> Actions()
+    {
+        lock (StateGate)
+        {
+            var snap = Load();
+            if (snap is null) return [];
+            var list = new List<string>();
+            var closed = snap.Steps.Where(s => s.Result == "done" && Rules.Any(r => r.Label == s.Title)).Select(s => s.Title).Distinct().ToList();
+            if (closed.Count > 0) list.Add(L($"סגר את {string.Join(", ", closed)}", $"closed {string.Join(", ", closed)}"));
+            var known = snap.Throttled.Where(t => !t.Busy).Select(t => t.Name).ToList();
+            if (known.Count > 0) list.Add(L($"הוריד לעדיפות נמוכה את {AppList(known)}", $"lowered {AppList(known)}"));
+            var busy = snap.Throttled.Where(t => t.Busy).Select(t => t.Name).ToList();
+            if (busy.Count > 0) list.Add(L($"השתיק כשעבדו קשה: {AppList(busy)}", $"quieted when they worked hard: {AppList(busy)}"));
+            list.AddRange(snap.Steps.Where(s => s.Result == "notice").Select(s => $"{s.Title}: {s.Detail}"));
+            return list;
+        }
     }
 
     public static GameModeStatus Restore(bool? periodicWifiSpikes)

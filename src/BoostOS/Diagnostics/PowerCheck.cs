@@ -74,11 +74,22 @@ internal static class PowerCheck
         {
             var app = MakerApp(facts.Machine);
             if (ClevoControlCenterInstalled())
+            {
                 // Many Gigabyte G5 and other laptops are Clevo-built and ship Clevo's Control Center 3.0 (Microsoft Store).
-                // Its mode lives in the laptop's controller, so BoostOS can say what to choose but not read it.
-                checks.Add(new("Control Center 3.0", L("מותקן", "Installed"), Info,
-                    L("זו התוכנה של הלפטופ למאווררים ולביצועים. למשחק: מצב Performance, ומאווררים על Maximum (או Custom עם עקומה גבוהה). המצב לא נקרא אוטומטית, אז כדאי לוודא לפני משחק.",
-                      "This is the laptop's own app for fans and performance. For play: Performance mode, and fans on Maximum (or Custom with a higher curve). BoostOS can't read the mode, so check it before playing.")));
+                // Its mode lives in the laptop's controller and isn't readable, but the GPU's power limit gives it away:
+                // the quiet and power-saving modes hold the card at its base power, Performance adds Dynamic Boost.
+                var (enforced, basePower, maxPower) = GpuCheck.PowerLimits();
+                checks.Add(GpuBelowFullPower(enforced, basePower, maxPower) switch
+                {
+                    true => new("Control Center 3.0", L($"לא על Performance · כרטיס {enforced:0}W מתוך {maxPower:0}W", $"Not on Performance · GPU {enforced:0} of {maxPower:0} W"), Warn,
+                        L("הכרטיס מוגבל להספק הבסיסי שלו, כמו במצב שקט או חסכוני. ב-Control Center בחר Performance: הכרטיס יקבל את ה-Dynamic Boost וגם המאווררים יעלו.",
+                          "The card is held to its base power, as in a quiet or power-saving mode. Choose Performance in Control Center: the card gets Dynamic Boost and the fans step up too.")),
+                    false => new("Control Center 3.0", L($"Performance · כרטיס עד {maxPower:0}W", $"Performance · GPU up to {maxPower:0} W"), Ok,
+                        L("הכרטיס מקבל Dynamic Boost, כמו במצב Performance.", "The card gets Dynamic Boost, as in Performance mode.")),
+                    null => new("Control Center 3.0", L("מותקן", "Installed"), Info,
+                        L("זו התוכנה של הלפטופ למאווררים ולביצועים. למשחק: מצב Performance.", "This is the laptop's own app for fans and performance. For play: Performance mode.")),
+                });
+            }
             else if (app == "Gigabyte Control Center" && !GigabyteControlCenterInstalled())
                 checks.Add(new(L("Gigabyte Control Center", "Gigabyte Control Center"), L("לא מותקן", "Not installed"), Warn,
                     L("בלי Control Center הלפטופ נשאר על פרופיל המאווררים הרגיל (Normal) ועל הספק הבסיס של הכרטיס. התקן אותו מדף התמיכה של Gigabyte לדגם שלך, ואז בחר מאווררים: Gaming, ובהגדרות הכרטיס: NVIDIA Dynamic Boost. זה השינוי הכי משמעותי לחום.",
@@ -145,6 +156,24 @@ internal static class PowerCheck
         foreach (var p in running) p.Dispose();
         return running.Length > 0;
     }
+
+    /// <summary>The power setup in one word, kept with each session: boostos, high, balanced-best, balanced, saver or other.</summary>
+    public static string? PlanKind()
+    {
+        if (ActiveScheme() is not { } s) return null;
+        if (s == Tuning.PowerPlan.Scheme) return "boostos";
+        if (s == HighPerformance || s == Ultimate) return "high";
+        if (s == PowerSaver) return "saver";
+        if (s == Balanced) return Overlay() == OverlayBestPerformance ? "balanced-best" : "balanced";
+        return "other";
+    }
+
+    /// <summary>
+    /// NVIDIA laptop cards run at their base power limit and add up to ~25 W of Dynamic Boost in the maker's
+    /// performance mode. An enforced limit stuck at the base means a quieter laptop mode (or Dynamic Boost off).
+    /// </summary>
+    public static bool? GpuBelowFullPower(double? enforced, double? basePower, double? maxPower) =>
+        enforced is { } e && basePower is { } b && maxPower is { } m && m > b + 5 ? e <= b + 1 : null;
 
     public static Guid? ActiveScheme()
     {

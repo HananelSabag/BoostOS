@@ -17,23 +17,36 @@ internal static class Log
 
     public static string FilePath => Path.Combine(Folder ?? AppSettings.DataDir, "log.txt");
 
+    /// <summary>Where lines go when log.txt can't be written, with the reason, so even that failure leaves a trace.</summary>
+    public static string FallbackPath => Path.Combine(Path.GetTempPath(), "BoostOS-log.txt");
+
     public static void Write(string message)
     {
-        try
+        var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  {Role,-8} {Environment.ProcessId,6}  {message}";
+        lock (Gate)
         {
-            lock (Gate)
+            try
             {
                 var folder = Path.GetDirectoryName(FilePath)!;
                 Directory.CreateDirectory(folder);
                 var info = new FileInfo(FilePath);
                 if (info.Exists && info.Length > MaxBytes)
                     try { File.Move(FilePath, Path.Combine(folder, "log.old.txt"), overwrite: true); } catch (IOException) { }
-                using var stream = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
-                using var writer = new StreamWriter(stream);
-                writer.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  {Role,-8}  {message}");
+                Append(FilePath, line);
+            }
+            catch (Exception ex)
+            {
+                try { Append(FallbackPath, $"{line}  [log.txt: {ex.GetType().Name}: {ex.Message}]"); }
+                catch { /* logging must never break what it watches */ }
             }
         }
-        catch { /* logging must never break what it watches */ }
+    }
+
+    private static void Append(string path, string line)
+    {
+        using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+        using var writer = new StreamWriter(stream);
+        writer.WriteLine(line);
     }
 
     public static void Error(string what, Exception error) =>

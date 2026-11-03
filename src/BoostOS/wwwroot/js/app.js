@@ -110,13 +110,14 @@ function applySettings(next) {
   app.report = null;
   if (app.scanning) rescanAfterCurrent = true;
   else startScan(); // diagnostic texts come from the host, in the new language
+  send('matches');  // and so do the session findings
 }
 
 // ---- Messages from the host ----
 
 on('hello', h => {
   app.version = h.version;
-  app.matches = h.matches ?? [];
+  takeMatches(h.matches);
   app.game = h.gameMode;
   app.fixesApplied = h.fixesApplied ?? 0;
   app.settings = { ...app.settings, ...h.settings };
@@ -142,7 +143,12 @@ on('gameMode', s => {
 on('gameRunning', g => { app.running = g.id; refreshAll(); });
 on('launch', r => toast(r.ok ? t('launch.ok', { name: r.name ?? '' }) : t('launch.fail')));
 on('notice', n => toast(n.message));
-on('matches', list => { app.matches = list ?? []; refreshAll(); });
+// Sessions arrive with what they mean already judged by the host ({ list, summary }); a bare list is the design preview.
+function takeMatches(m) {
+  app.matches = Array.isArray(m) ? m : m?.list ?? [];
+  app.summary = Array.isArray(m) ? null : m?.summary ?? null;
+}
+on('matches', m => { takeMatches(m); refreshAll(); });
 on('matchReport', ({ report }) => {
   app.running = null;
   app.matches = [report, ...(app.matches ?? []).filter(m => m.start !== report.start)].slice(0, 20);

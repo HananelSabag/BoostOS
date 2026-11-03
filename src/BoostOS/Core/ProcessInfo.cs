@@ -11,7 +11,11 @@ namespace BoostOS.Core;
 internal static class ProcessInfo
 {
     /// <summary>One process: id, image name (lower case, no ".exe"), start time and total CPU time (100 ns units).</summary>
-    public sealed record Entry(int Pid, string Name, long CreateTime, long CpuTime);
+    public sealed record Entry(int Pid, string Name, long CreateTime, long CpuTime)
+    {
+        /// <summary>The Windows session it runs in: 0 for services, the signed-in user's session for their apps.</summary>
+        public int SessionId { get; init; } = -1;
+    }
 
     private const int SystemProcessInformation = 5;
     private const int SystemProcessIdInformation = 88;
@@ -43,7 +47,8 @@ internal static class ProcessInfo
         return [];
     }
 
-    // SYSTEM_PROCESS_INFORMATION (x64): CreateTime @32, UserTime @40, KernelTime @48, ImageName @56, UniqueProcessId @80.
+    // SYSTEM_PROCESS_INFORMATION (x64): CreateTime @32, UserTime @40, KernelTime @48, ImageName @56, UniqueProcessId @80,
+    // SessionId @100.
     private static List<Entry> Parse(IntPtr buf)
     {
         var list = new List<Entry>(400);
@@ -58,7 +63,7 @@ internal static class ProcessInfo
             var name = pid == 0 ? "idle" : nameLength > 0 && namePtr != IntPtr.Zero ? Marshal.PtrToStringUni(namePtr, nameLength / 2) : "";
             if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name[..^4];
             list.Add(new Entry(pid, name.ToLowerInvariant(), Marshal.ReadInt64(entry, 32),
-                Marshal.ReadInt64(entry, 40) + Marshal.ReadInt64(entry, 48)));
+                Marshal.ReadInt64(entry, 40) + Marshal.ReadInt64(entry, 48)) { SessionId = Marshal.ReadInt32(entry, 100) });
             if (next == 0) break;
             offset += next;
         }

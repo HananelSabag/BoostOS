@@ -45,6 +45,15 @@ internal static class Program
             return 0;
         }
 
+        // What the recorded sessions mean, as the Game data tab shows it: checks the findings against real recordings.
+        if (args is ["--findings-json", var findingsPath, ..])
+        {
+            I18n.English = args.Length > 2 && args[2] == "en";
+            NetFacts.Recent(); // read the link once, as the window has by the time it shows sessions
+            File.WriteAllText(findingsPath, JsonSerializer.Serialize(Game.SessionFindings.Payload(Game.MatchStore.Load()), Json));
+            return 0;
+        }
+
         if (args is ["--games-json", var gamesPath, ..])
         {
             var games = Game.GameLibrary.List(refresh: true);
@@ -55,6 +64,19 @@ internal static class Program
                 running = running?.Id,
                 video = RlVideo.Read(hot: false),
             }, Json));
+            return 0;
+        }
+
+        // Which apps Game Mode would quiet as busy right now, measured over a few seconds; changes nothing.
+        if (args is ["--busy-test", ..])
+        {
+            var seconds = args.Length > 1 && int.TryParse(args[1], out var s) ? Math.Max(10, s) : 20;
+            var minShare = args.Length > 2 && double.TryParse(args[2], System.Globalization.CultureInfo.InvariantCulture, out var m) ? m : 2;
+            Game.BackgroundThrottle.Mark();
+            Thread.Sleep(seconds * 1000);
+            var picked = Game.BackgroundThrottle.ApplyBusy(["rocketleague"], [], minShare,
+                e => new Game.BackgroundThrottle.Throttled(e.Pid, e.CreateTime, e.Name, 0));
+            Console.WriteLine($"would quiet {picked.Count}: {string.Join(", ", picked.Select(t => t.Name))}");
             return 0;
         }
 
@@ -115,6 +137,7 @@ internal static class Program
 
         ApplicationConfiguration.Initialize();
         if (args is ["--agent", ..]) return Agent.Run();
+        Log.Write($"window opened, version {Application.ProductVersion.Split('+')[0]}, {Environment.ProcessPath}");
         Application.Run(new MainForm(windowed: args.Contains("--windowed")));
         return 0;
     }

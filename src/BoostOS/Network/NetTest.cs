@@ -35,12 +35,21 @@ public static class NetTest
             targets.Add(new("router", link.IsWifi ? L("נתב (החיבור האלחוטי)", "Router (the Wi-Fi link)") : L("נתב", "Router"), link.Gateway, 400));
         targets.Add(new("internet", L("אינטרנט (1.1.1.1)", "Internet (1.1.1.1)"), IPAddress.Parse("1.1.1.1"), 400));
 
+        // The link as it is during the test: advice is built from it, not said to everyone.
+        var facts = Task.Run(NetFacts.Recent);
         var runs = await Task.WhenAll(targets.Select(t => PingLoop(t, seconds, onSample, ct))).ConfigureAwait(false);
         var stats = targets.Zip(runs, Analyze).ToList();
         var routerIndex = targets.FindIndex(t => t.Id == "router");
         List<double> routerLossTimes = routerIndex < 0 ? [] : runs[routerIndex].Where(s => s.Ms is null).Select(s => s.T).ToList();
-        return Judge(seconds, stats, LooksRateLimited(routerLossTimes));
+        NetFacts? known = null;
+        try { known = await facts.ConfigureAwait(false); } catch { }
+        return Judge(seconds, stats, LooksRateLimited(routerLossTimes), known);
     }
+
+    /// <summary>What to try, from the link's own facts (band, width, DFS, Bluetooth), in order of likely payoff.</summary>
+    private static string Advice(NetFacts? facts) =>
+        facts is null ? L("נסה בנתב ערוץ 5GHz אחר או רוחב 80MHz, והרץ שוב.", "Try another 5GHz channel or 80MHz width on the router, and test again.")
+        : string.Join(" ", WifiAdvice.For(facts, trouble: true).Take(2).Select(t => WifiAdvice.Text(t, facts)));
 
     /// <summary>
     /// Finds a regular timing pattern that can occur with ICMP rate limiting. Timing alone cannot
@@ -129,7 +138,7 @@ public static class NetTest
             sorted.Count == 0 ? null : sorted[^1], jitter, eventStarts.Count, Math.Round(threshold, 1), period);
     }
 
-    internal static NetTestResult Judge(int seconds, List<TargetStats> stats, bool pacedLoss)
+    internal static NetTestResult Judge(int seconds, List<TargetStats> stats, bool pacedLoss, NetFacts? facts = null)
     {
         var findings = new List<NetFinding>();
         var router = stats.FirstOrDefault(s => s.Id == "router");
@@ -166,14 +175,16 @@ public static class NetTest
 
             if (router.PeriodSeconds is { } p)
             {
+                var scans = facts?.Wifi is { Intel: true }
+                    ? L(" בכרטיסי Intel זה הדפוס המוכר של סריקות Wi-Fi ברקע.", " On Intel cards that's the known pattern of background Wi-Fi scans.") : "";
                 findings.Add(new(CheckStatus.Bad,
-                    L($"קפיצות פינג לנתב כל {p:0} שניות בערך. פעילות רקע, הפרעות או סריקות Wi-Fi עשויות לגרום לכך; הדפוס לבדו לא מזהה את הסיבה. השווה בדיקה נוספת בחיבור כבל.", $"Ping spikes to the router about every {p:0} seconds. Background activity, interference or Wi-Fi scans may cause this; the pattern alone does not identify the cause. Compare another test over a cable.")));
+                    L($"קפיצות פינג לנתב כל {p:0} שניות בערך.{scans} הדפוס לבדו לא מוכיח את הסיבה: השווה בדיקה נוספת בחיבור כבל.", $"Ping spikes to the router about every {p:0} seconds.{scans} The pattern alone doesn't prove the cause: compare another test over a cable.")));
                 clean = false;
             }
             else if (router.SpikeEvents >= 3)
             {
                 findings.Add(new(CheckStatus.Warn,
-                    L($"{router.SpikeEvents} קפיצות פינג לנתב, בלי דפוס קבוע. זה בדרך כלל הפרעות: רשתות שכנות, Bluetooth או ערוץ צפוף. שווה לנסות בנתב ערוץ 5GHz אחר או רוחב 80MHz, ולהריץ שוב.", $"{router.SpikeEvents} ping spikes to the router with no fixed pattern. Usually interference: neighbours' networks, Bluetooth or a crowded channel. Try another 5GHz channel or 80MHz width on the router and test again.")));
+                    L($"{router.SpikeEvents} קפיצות פינג לנתב, בלי דפוס קבוע.", $"{router.SpikeEvents} ping spikes to the router with no fixed pattern.") + " " + Advice(facts)));
                 clean = false;
             }
 

@@ -35,7 +35,8 @@ internal static class BackgroundCheck
         checks.Add(procs.Length < 200
             ? new(open, $"{procs.Length}{memText}", Ok)
             : new(open, $"{procs.Length}{memText}", Info,
-                L("הרבה תוכנות פתוחות ברקע. מצב משחק סוגר את אלה שמפריעות לפני כל משחק.", "Plenty running in the background. Game Mode closes the ones that get in the way before each match.")));
+                L("הרבה תוכנות פתוחות ברקע. מצב משחק סוגר את אלה שמפריעות, מוריד את הכבדות לעדיפות נמוכה, ולאורך המשחק משתיק כל תוכנה שמתחילה לעבוד קשה.",
+                  "Plenty running in the background. Game Mode closes the ones that get in the way, drops heavy ones to low priority, and through the game quiets any app that starts working hard.")));
 
         var closing = GameMode.RunningLabels();
         var closeTitle = L("מצב משחק יסגור", "Game Mode will close");

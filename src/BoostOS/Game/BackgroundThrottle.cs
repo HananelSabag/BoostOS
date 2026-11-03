@@ -11,7 +11,11 @@ namespace BoostOS.Game;
 /// </summary>
 internal static class BackgroundThrottle
 {
-    public sealed record Throttled(int Pid, long CreateTime, string Name, int OldPriority);
+    public sealed record Throttled(int Pid, long CreateTime, string Name, int OldPriority)
+    {
+        /// <summary>Lowered because it was measured working hard, not because it is on the known list.</summary>
+        public bool Busy { get; init; }
+    }
 
     // Heavy apps people leave open while they play. Lower case, without ".exe".
     internal static readonly HashSet<string> Targets =
@@ -46,8 +50,25 @@ internal static class BackgroundThrottle
     [DllImport("kernel32.dll")] private static extern bool SetPriorityClass(IntPtr process, uint priority);
     [DllImport("kernel32.dll")] private static extern bool SetProcessInformation(IntPtr process, int infoClass, ref PowerThrottlingState info, int size);
 
+    // Never lowered even when measured busy: anything that plays or carries sound and voice, records or streams the
+    // screen, drives controllers or lighting, remote desktop, and the launchers and overlays games rely on.
+    private static readonly HashSet<string> NeverBusy =
+    [
+        "discord", "spotify", "teamspeak", "ts3client_win64", "ts6client", "mumble", "voicemeeter", "voicemeeterpro",
+        "voicemeeter8", "voicemeeter8x64", "audiorelay", "steelseriesgg", "steelseriessonar", "steelseriesengine",
+        "obs64", "obs32", "streamlabs obs", "xsplit.core", "nvcontainer", "nvidia share", "nvidia overlay", "nvidia_overlay",
+        "nvidia app", "nvsphelper64", "radeonsoftware", "amdrsserv",
+        "devicehub", "razer synapse 3", "razercentralservice", "ds4windows", "dsx", "x360ce", "antimicrox", "joytokey",
+        "anydesk", "teamviewer", "vmware-view", "vmware-remotemks", "parsecd", "sunshine", "moonlight",
+        "epicgameslauncher", "eosoverlayrenderer-win64-shipping", "steam", "steamwebhelper", "gameoverlayui", "bakkesmod",
+        "msedgewebview2", "taskmgr", "conhost",
+    ];
+
     internal static bool IsTarget(string name, IReadOnlySet<string> gameProcesses) =>
         Targets.Contains(name) && !Never.Contains(name) && !gameProcesses.Contains(name);
+
+    internal static bool MayQuietWhenBusy(string name, IReadOnlySet<string> gameProcesses) =>
+        !Never.Contains(name) && !NeverBusy.Contains(name) && !gameProcesses.Contains(name);
 
     /// <summary>Puts every running target (not already done) into efficiency mode and returns what changed.</summary>
     public static List<Throttled> Apply(IEnumerable<string> gameProcesses, IReadOnlyCollection<Throttled> already)
@@ -58,19 +79,82 @@ internal static class BackgroundThrottle
         foreach (var e in ProcessInfo.Snapshot())
         {
             if (!IsTarget(e.Name, game) || done.Contains((e.Pid, e.CreateTime))) continue;
-            var h = OpenProcess(SetInformation | QueryLimited, false, e.Pid);
-            if (h == IntPtr.Zero) continue; // another user's or a protected process: leave it
-            try
-            {
-                var old = GetPriorityClass(h);
-                if (old == 0 || old == IdlePriority) continue; // unreadable, or the user already set it
-                var state = new PowerThrottlingState { Version = 1, ControlMask = ThrottleExecutionSpeed, StateMask = ThrottleExecutionSpeed };
-                SetProcessInformation(h, ProcessPowerThrottling, ref state, Marshal.SizeOf<PowerThrottlingState>());
-                if (SetPriorityClass(h, IdlePriority)) result.Add(new Throttled(e.Pid, e.CreateTime, e.Name, (int)old));
-            }
-            finally { CloseHandle(h); }
+            if (Lower(e) is { } lowered) result.Add(lowered);
         }
         return result;
+    }
+
+    private static readonly object BaselineGate = new();
+    private static Dictionary<(int, long), long>? baseline;
+    private static long baselineAt;
+
+    /// <summary>Notes every process's CPU time now: the starting line the next <see cref="ApplyBusy"/> measures from.</summary>
+    public static void Mark()
+    {
+        var snapshot = ProcessInfo.Snapshot();
+        lock (BaselineGate)
+        {
+            baseline = snapshot.ToDictionary(e => (e.Pid, e.CreateTime), e => e.CpuTime);
+            baselineAt = System.Diagnostics.Stopwatch.GetTimestamp();
+        }
+    }
+
+    /// <summary>
+    /// Lowers apps measured working hard since the last look: any app of this user that took <paramref name="minShare"/>%
+    /// or more of the whole CPU, whatever it is, except the game, Windows' own programs and everything in NeverBusy.
+    /// </summary>
+    /// <param name="lower">How to lower one process; a dry run passes one that only records (--busy-test).</param>
+    public static List<Throttled> ApplyBusy(IEnumerable<string> gameProcesses, IReadOnlyCollection<Throttled> already, double minShare = 2,
+        Func<ProcessInfo.Entry, Throttled?>? lower = null)
+    {
+        lower ??= Lower;
+        var snapshot = ProcessInfo.Snapshot();
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        Dictionary<(int, long), long>? before;
+        long since;
+        lock (BaselineGate)
+        {
+            before = baseline;
+            since = baselineAt;
+            baseline = snapshot.ToDictionary(e => (e.Pid, e.CreateTime), e => e.CpuTime);
+            baselineAt = now;
+        }
+        if (before is null) return [];
+        var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(since, now);
+        if (elapsed < TimeSpan.FromSeconds(10)) return []; // too short to call anything busy
+        var wall = elapsed.Ticks * (double)Environment.ProcessorCount; // all cores, in the same 100 ns units as CPU time
+
+        var game = new HashSet<string>(gameProcesses);
+        var done = new HashSet<(int, long)>(already.Select(t => (t.Pid, t.CreateTime)));
+        var mySession = System.Diagnostics.Process.GetCurrentProcess().SessionId;
+        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var result = new List<Throttled>();
+        foreach (var e in snapshot)
+        {
+            if (e.SessionId != mySession || e.Pid == Environment.ProcessId || done.Contains((e.Pid, e.CreateTime))) continue;
+            if (!MayQuietWhenBusy(e.Name, game) || !before.TryGetValue((e.Pid, e.CreateTime), out var cpuBefore)) continue;
+            if (100d * (e.CpuTime - cpuBefore) / wall < minShare) continue;
+            // Windows' own programs (Explorer, the shell, input, Defender's tray) are never touched.
+            if (ProcessInfo.ImagePath(e.Pid) is not { } path || path.StartsWith(windows, StringComparison.OrdinalIgnoreCase)) continue;
+            if (lower(e) is { } lowered) result.Add(lowered with { Busy = true });
+        }
+        return result;
+    }
+
+    /// <summary>Efficiency mode for one process: EcoQoS and idle priority, remembering the priority it had.</summary>
+    private static Throttled? Lower(ProcessInfo.Entry e)
+    {
+        var h = OpenProcess(SetInformation | QueryLimited, false, e.Pid);
+        if (h == IntPtr.Zero) return null; // another user's or a protected process: leave it
+        try
+        {
+            var old = GetPriorityClass(h);
+            if (old == 0 || old == IdlePriority) return null; // unreadable, or the user already set it
+            var state = new PowerThrottlingState { Version = 1, ControlMask = ThrottleExecutionSpeed, StateMask = ThrottleExecutionSpeed };
+            SetProcessInformation(h, ProcessPowerThrottling, ref state, Marshal.SizeOf<PowerThrottlingState>());
+            return SetPriorityClass(h, IdlePriority) ? new Throttled(e.Pid, e.CreateTime, e.Name, (int)old) : null;
+        }
+        finally { CloseHandle(h); }
     }
 
     /// <summary>Gives each process still running its old priority back and hands power decisions back to Windows.</summary>

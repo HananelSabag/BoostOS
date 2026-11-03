@@ -58,14 +58,19 @@ internal static class GpuCheck
             });
         }
 
-        if (N(9) is { } limit && N(10) is { } maxLimit)
-            checks.Add(limit + 1 < maxLimit
-                ? new(L("הספק מקסימלי (TGP)", "Power limit (TGP)"), $"{limit:0}W · {L($"מתוך {maxLimit:0}W אפשריים", $"of {maxLimit:0}W possible")}", Info,
-                    facts.IsLaptop
-                        ? L("במנוחה הכרטיס מוגבל להספק נמוך מהמקסימום שלו. בלפטופים ההגבלה עולה תחת עומס (Dynamic Boost) ובמצב Turbo/Performance של תוכנת היצרן. דוח המשחק מראה כמה מהזמן הכרטיס היה מוגבל.",
-                            "At idle the card sits below its maximum. On laptops the limit rises under load (Dynamic Boost) and in the maker's Turbo/Performance mode. The match report shows how often the card was held back.")
-                        : L("מגבלת ההספק נמוכה מהמקסימום של הכרטיס.", "The power limit is below the card's maximum."))
-                : new(L("הספק מקסימלי (TGP)", "Power limit (TGP)"), $"{limit:0}W · {L("מקסימום", "maximum")}", Ok));
+        // The enforced limit against the card's base and its Dynamic Boost ceiling tells the laptop's mode.
+        var (enforced, basePower, maxPower) = PowerLimits();
+        if ((enforced ?? N(9)) is { } limit && (maxPower ?? N(10)) is { } maxLimit)
+        {
+            var powerTitle = L("הספק מקסימלי (TGP)", "Power limit (TGP)");
+            var value = $"{limit:0}W · {L($"מתוך {maxLimit:0}W", $"of {maxLimit:0} W")}";
+            checks.Add(PowerCheck.GpuBelowFullPower(limit, basePower, maxLimit) == true
+                ? new(powerTitle, value, Warn,
+                    L($"הכרטיס עומד על ההספק הבסיסי שלו ({basePower:0}W) בלי Dynamic Boost. ככה נראים המצבים השקטים והחסכוניים של תוכנת הלפטופ; במצב Performance הוא מקבל עד {maxLimit:0}W.",
+                      $"The card sits at its base power ({basePower:0} W) without Dynamic Boost. That's what the laptop app's quiet and power-saving modes look like; in Performance it gets up to {maxLimit:0} W."))
+                : new(powerTitle, value, Ok, limit + 1 < maxLimit
+                    ? L("Dynamic Boost פעיל: הגבול זז לפי העומס על המעבד והכרטיס.", "Dynamic Boost is on: the limit moves with the CPU and GPU load.") : null));
+        }
 
         if (N(11) is { } clock) checks.Add(new(L("מהירות ליבה מקסימלית", "Max core clock"), $"{clock:0} MHz", Info));
 
@@ -142,6 +147,25 @@ internal static class GpuCheck
                 Fixes.Ref("nvidia-global-power")));
         else
             checks.Add(new(title, $"{L("נח", "Resting")} · {now}", Ok, null, Fixes.Ref("nvidia-global-power")));
+    }
+
+    /// <summary>The card's power limit now, its base and its ceiling with Dynamic Boost (W), or nulls without an NVIDIA card.</summary>
+    internal static (double? Enforced, double? Base, double? Max) PowerLimits()
+    {
+        var smi = FindNvidiaSmi();
+        if (smi is null) return (null, null, null);
+        (double? Enforced, double? Base, double? Max) Read()
+        {
+            var v = Shell.Run(smi, "--query-gpu=enforced.power.limit,power.default_limit,power.max_limit --format=csv,noheader,nounits")
+                ?.Split('\n')[0].Split(',').Select(s => double.TryParse(s.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var w) ? w : (double?)null).ToArray();
+            return v is { Length: 3 } ? (v[0], v[1], v[2]) : (null, null, null);
+        }
+        var first = Read();
+        // Dynamic Boost shifts power to a busy CPU for a moment; only a limit that stays at the base means a quiet mode.
+        if (PowerCheck.GpuBelowFullPower(first.Enforced, first.Base, first.Max) != true) return first;
+        Thread.Sleep(600);
+        var second = Read();
+        return second.Enforced > first.Enforced ? second : first;
     }
 
     /// <summary>The card's top graphics clock in MHz, or null without an NVIDIA card.</summary>

@@ -36,7 +36,7 @@ internal sealed class Agent : ApplicationContext
         catch (Exception ex) { Log.Error("restoring a session left half-done", ex); }
         var settings = AppSettings.Load();
         if (!settings.BackgroundRecorder) return 0;
-        Log.Write($"started, version {Application.ProductVersion.Split('+')[0]}");
+        Log.Write($"started, version {Application.ProductVersion.Split('+')[0]}, {Environment.ProcessPath}");
         Sync(settings); // keeps the start-with-Windows entry pointing at this copy
         try { MatchStore.Recover(gpuMaxClock: Diagnostics.GpuCheck.MaxClock); }
         catch (Exception ex) { Log.Error("recovering sessions", ex); }

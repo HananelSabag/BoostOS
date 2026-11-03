@@ -7,7 +7,12 @@ namespace BoostOS.Tuning;
 
 public sealed record VideoSetting(string Id, string Value, IReadOnlyList<string> Options, string? Recommended);
 
-public sealed record VideoState(bool Found, bool Running, string? Resolution, bool Changed, bool Hot, IReadOnlyList<VideoSetting> Settings);
+public sealed record VideoState(bool Found, bool Running, string? Resolution, bool Changed, bool Hot, IReadOnlyList<VideoSetting> Settings)
+{
+    /// <summary>The main display's refresh rate and the driver's FPS cap for Rocket League (null: none), for the Max FPS note.</summary>
+    public int? Hz { get; init; }
+    public int? Cap { get; init; }
+}
 
 /// <summary>
 /// Rocket League's video settings, read from and written to its own TASystemSettings.ini, the same file the game's
@@ -41,10 +46,13 @@ internal static class RlVideo
     {
         var ini = RocketLeague.ReadIni(IniPath, Section);
         var running = RocketLeague.IsRunning();
-        if (ini.Count == 0) return new VideoState(false, running, null, false, hot, []);
+        int? hz = null, cap = null;
+        try { hz = Fixes.MainRefreshHz(); } catch { }
+        try { cap = Nvidia.ReadFrameCap() is > 0 and var c ? (int)c : null; } catch { }
+        if (ini.Count == 0) return new VideoState(false, running, null, false, hot, []) { Hz = hz, Cap = cap };
         return new VideoState(true, running,
             ini.TryGetValue("ResX", out var x) && ini.TryGetValue("ResY", out var y) ? $"{x}×{y}" : null,
-            File.Exists(BackupPath), hot, Describe(ini, hot));
+            File.Exists(BackupPath), hot, Describe(ini, hot)) { Hz = hz, Cap = cap };
     }
 
     internal static List<VideoSetting> Describe(IReadOnlyDictionary<string, string> ini, bool hot)

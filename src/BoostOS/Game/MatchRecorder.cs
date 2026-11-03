@@ -35,8 +35,11 @@ internal sealed class MatchRecorder : IDisposable
     private PingProbe? ping;
     private CpuClockProbe? cpuClock;
     private BackgroundCpu? background;
-    private double? ramTotalGb, vramTotalMb, gpuMaxClock;
+    private double? ramTotalGb, vramTotalMb, gpuMaxClock, gpuPowerDefault, gpuPowerMax;
     private WifiProbe.Reading? wifi;
+    private LaptopProbe.Reading? laptop;
+    private Network.NetFacts? net;
+    private string? powerPlan;
     private int tick;
     private readonly bool live; // the real probes run (false in tests)
 
@@ -44,6 +47,9 @@ internal sealed class MatchRecorder : IDisposable
     {
         this.game = game;
         live = true;
+        // What advice will depend on, as it is when the game starts: the connection, Bluetooth, the power plan.
+        try { net = Network.NetFacts.Collect(); } catch (Exception ex) { Log.Error("reading the connection", ex); }
+        try { powerPlan = Diagnostics.PowerCheck.PlanKind(); } catch { }
         try { cpuClock = new CpuClockProbe(); } catch { cpuClock = null; }
         try { background = new BackgroundCpu(game?.Processes ?? []); background.Sample(); } catch { background = null; }
         try { ping = new PingProbe(Diagnostics.NetworkCheck.FindActiveLink()?.Gateway, elapsed); } catch { ping = null; }
@@ -54,7 +60,7 @@ internal sealed class MatchRecorder : IDisposable
             smi = new Process
             {
                 StartInfo = new ProcessStartInfo(exe,
-                    "--query-gpu=uuid,utilization.gpu,temperature.gpu,clocks.gr,power.draw,clocks_event_reasons.active,memory.used,memory.total,enforced.power.limit,clocks.max.graphics --format=csv,noheader,nounits -lms 2000")
+                    "--query-gpu=uuid,utilization.gpu,temperature.gpu,clocks.gr,power.draw,clocks_event_reasons.active,memory.used,memory.total,enforced.power.limit,clocks.max.graphics,power.default_limit,power.max_limit --format=csv,noheader,nounits -lms 2000")
                 {
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -122,8 +128,10 @@ internal sealed class MatchRecorder : IDisposable
             double? mhz = null, ram = null;
             try { mhz = cpuClock?.Read(); } catch { }
             if (live && MemoryProbe.Read() is { } memory) { ram = memory.UsedPct; ramTotalGb = memory.TotalGb; }
-            // The Wi-Fi link every 10 s and the process list every 30 s: both are cheap, but not free.
+            // The Wi-Fi link and the laptop's fans every 10 s and the process list every 30 s: cheap, but not free.
             if (live && n % 5 == 0) try { wifi = WifiProbe.Read(); } catch { wifi = null; }
+            if (live && n % 5 == 2) try { laptop = LaptopProbe.Read(); } catch { laptop = null; }
+            var onBattery = live ? LaptopProbe.OnBattery() : null;
             if (n % 15 == 14) try { background?.Sample(); } catch { }
             var seconds = elapsed();
             lock (gate)
@@ -132,6 +140,8 @@ internal sealed class MatchRecorder : IDisposable
                 var latest = gpu.Current(seconds);
                 if (latest?.VramTotalMb is { } total) vramTotalMb = total;
                 if (latest?.MaxClock is { } top) gpuMaxClock = top;
+                if (latest?.PowerDefault is { } basePower) gpuPowerDefault = basePower;
+                if (latest?.PowerMax is { } maxPower) gpuPowerMax = maxPower;
                 if (samples.Count >= MaxSamples) { samples.RemoveAt(0); truncated = true; }
                 samples.Add(new MatchSample(latest?.Util ?? double.NaN, latest?.Temp ?? double.NaN,
                     latest?.Clock ?? double.NaN, latest?.Power ?? double.NaN,
@@ -146,6 +156,7 @@ internal sealed class MatchRecorder : IDisposable
                     RouterMs = ping?.LastRouter, InternetMs = ping?.LastInternet,
                     WifiQuality = wifi?.Quality, WifiRssi = wifi?.Rssi, WifiRxMbps = wifi?.RxMbps,
                     GpuPowerLimit = latest?.PowerLimit,
+                    CpuTemp = laptop?.CpuTemp, FanDuty = laptop?.FanDuty, OnBattery = onBattery,
                 });
             }
         }
@@ -178,23 +189,31 @@ internal sealed class MatchRecorder : IDisposable
         }
     }
 
-    public MatchReport Finish()
-        => FinishTo(Path.Combine(AppSettings.DataDir, "sessions"));
+    /// <param name="decorate">Adds what only the caller knows (what Game Mode did), before the archive is written.</param>
+    public MatchReport Finish(Func<MatchReport, MatchReport>? decorate = null)
+        => FinishTo(Path.Combine(AppSettings.DataDir, "sessions"), decorate);
 
-    internal MatchReport FinishTo(string archiveDirectory)
+    internal MatchReport FinishTo(string archiveDirectory, Func<MatchReport, MatchReport>? decorate = null)
     {
         lock (stopGate)
         {
             if (finalReport is not null) return finalReport;
             Dispose();
             List<MatchSample> saved;
-            double? topClock;
-            lock (gate) { saved = [.. samples]; topClock = gpuMaxClock; }
+            double? topClock, powerDefault, powerMax;
+            lock (gate) { saved = [.. samples]; topClock = gpuMaxClock; powerDefault = gpuPowerDefault; powerMax = gpuPowerMax; }
             var end = ended ?? start;
             var pings = ping?.Results() ?? [];
             try { background?.Sample(); } catch { }
+            Network.WifiLink? wifiAtEnd = null;
+            if (live && net is { OnWifi: true }) try { wifiAtEnd = Network.WifiLink.Read(); } catch { }
             var report = Summarize(start.LocalDateTime, end.LocalDateTime, gameMode, saved, topClock) with
             {
+                Net = net,
+                WifiAtEnd = wifiAtEnd,
+                PowerPlan = powerPlan,
+                GpuPowerDefault = powerDefault,
+                GpuPowerMax = powerMax,
                 Minutes = Math.Round(Math.Max(0, (end - start).TotalMinutes), 1),
                 TelemetryTruncated = truncated,
                 GameId = game?.Id,
@@ -206,6 +225,7 @@ internal sealed class MatchRecorder : IDisposable
                 Internet = SessionSummary.Ping(pings, "internet"),
                 Background = background?.Top(),
             };
+            if (decorate is not null) try { report = decorate(report); } catch (Exception ex) { Log.Error("adding to the report", ex); }
             try
             {
                 // The summary travels inside the archive: if it never reaches the list, MatchStore.Recover finds it there.

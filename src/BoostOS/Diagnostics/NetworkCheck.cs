@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using BoostOS.Core;
+using BoostOS.Network;
 using BoostOS.Tuning;
 using static BoostOS.Core.CheckStatus;
 using static BoostOS.Core.I18n;
@@ -29,7 +30,7 @@ internal static class NetworkCheck
         return null;
     }
 
-    public static Section Run(Facts facts)
+    public static Section Run(Facts scan)
     {
         var checks = new List<Check>();
         var title = L("רשת", "Network");
@@ -43,7 +44,6 @@ internal static class NetworkCheck
 
         var adapters = Wmi.Query("SELECT Name, InterfaceDescription, DriverVersionString, NdisPhysicalMedium, MediaConnectState FROM MSFT_NetAdapter WHERE ConnectorPresent = TRUE",
             @"root\StandardCimv2");
-        var ethernetPort = adapters.FirstOrDefault(a => a.Long("NdisPhysicalMedium") == 14);
         var router = L("נתב", "Router");
 
         if (!link.IsWifi)
@@ -53,51 +53,60 @@ internal static class NetworkCheck
             return new Section("network", title, "wifi", checks);
         }
 
-        var w = Shell.ParseColonList(Shell.Run("netsh", "wlan show interfaces"));
-        var band = w.GetValueOrDefault("Band", "");
-        var hasRssi = int.TryParse(w.GetValueOrDefault("Rssi", ""), out var rssi);
-        var strongFastWifi = !band.StartsWith("2.4", StringComparison.Ordinal) && band != "" && hasRssi && rssi >= -60;
+        // Advice about the link is judged against what the games showed: a strong link with spike-free games needs nothing.
+        var facts = NetFacts.Recent();
+        var w = facts.Wifi;
+        var played = Game.SessionFindings.WifiEvidence(Game.MatchStore.Load());
+        // A few spikes an hour are worth a test (info); a dozen or real loss is a problem (warn).
+        var level = played is { } e ? e.PerHour >= 12 || e.Loss >= 1 ? Warn : e.PerHour >= 6 ? Info : Ok : Ok;
+        var trouble = level != Ok;
+        var drops = played is { Loss: >= 0.5 };
+        var evidence = played is { } p
+            ? L($"במשחקים האחרונים: {p.PerHour:0} קפיצות פינג בשעה, הכי גבוה {p.MaxMs:0} ms.", $"In your recent games: {p.PerHour:0} ping spikes an hour, highest {p.MaxMs:0} ms.")
+            : L("עוד אין משחקים מוקלטים עם פינג, אז בדיקת הרשת היא הדרך לדעת.", "No recorded games with ping yet, so the network test is the way to know.");
+        string Tips(bool withTrouble) => string.Join(" ", WifiAdvice.For(facts, withTrouble, drops).Take(2).Select(t => WifiAdvice.Text(t, facts)));
 
-        // A strong 5/6 GHz link close to the router is fine for Rocket League; only nag about a cable when the link is weak.
-        checks.Add(strongFastWifi
-            ? new(connection, $"Wi-Fi · {L("אות חזק ב-5GHz", "strong 5GHz signal")}", Ok,
-                L("כבל הוא עדיין הכי יציב, אבל Wi-Fi חזק על 5GHz קרוב לנתב מספיק לרוקט ליג. בדיקת הרשת תראה אם יש קפיצות.",
-                  "A cable is still the steadiest, but strong 5GHz Wi-Fi near the router is enough for Rocket League. The network test shows any spikes."))
-            : new(connection, "Wi-Fi", Warn,
-                ethernetPort is not null
-                    ? L($"ללפטופ יש יציאת כבל רשת ({ethernetPort.Str("InterfaceDescription")}). כבל לנתב פותר בבת אחת את כל מה שקשור ל-Wi-Fi: קפיצות פינג, איבוד חבילות והפרעות.",
-                        $"This PC has an Ethernet port ({ethernetPort.Str("InterfaceDescription")}). A cable to the router fixes every Wi-Fi issue at once: ping spikes, packet loss and interference.")
-                    : L("כבל רשת תמיד יציב יותר מ-Wi-Fi. אם אין אפשרות, למטה יש מה לשפר.", "A cable is always steadier than Wi-Fi. If that's not an option, see below.")));
+        if (w is null)
+        {
+            checks.Add(new(connection, "Wi-Fi", Info, L("לא הצלחתי לקרוא את פרטי החיבור האלחוטי.", "Couldn't read the Wi-Fi link details.")));
+            checks.Add(new(router, link.Gateway.ToString(), Info));
+            return new Section("network", title, "wifi", checks);
+        }
 
-        var channel = w.GetValueOrDefault("Channel", "?");
-        var radio = w.GetValueOrDefault("Radio type", "");
-        _ = double.TryParse(w.GetValueOrDefault("Receive rate (Mbps)", ""), NumberStyles.Float, CultureInfo.InvariantCulture, out var rx);
+        var good = !w.Is24 && w.Strong;
+        // A strong link: the evidence here, and each line below carries its own fix. A weak one: the fix right here.
+        var below = trouble ? L(" מה לנסות מופיע בשורות למטה.", " What to try is in the lines below.") : "";
+        checks.Add(good
+            ? new(connection, $"Wi-Fi · {L($"אות חזק ב-{w.Band}", $"strong {w.Band} signal")}", level, evidence + below)
+            : new(connection, "Wi-Fi", Warn, $"{evidence} {Tips(trouble)}".Trim()));
 
         var bandTitle = L("תדר", "Band");
-        if (band.StartsWith("2.4", StringComparison.Ordinal))
-            checks.Add(new(bandTitle, $"{band} · {L("ערוץ", "channel")} {channel}", Bad,
-                L("רשת 2.4GHz צפופה, איטית ומתנגשת עם Bluetooth. ברוב הנתבים יש גם רשת 5GHz: התחבר אליה.", "2.4GHz is crowded, slow and clashes with Bluetooth. Most routers also offer 5GHz: connect to it.")));
-        else if (band != "")
-            checks.Add(new(bandTitle, $"{band} · {L("ערוץ", "channel")} {channel}", Ok));
+        var bandValue = $"{w.Band} · {L("ערוץ", "channel")} {w.Channel}{(w.Dfs ? " (DFS)" : "")}";
+        checks.Add(w.Is24
+            ? new(bandTitle, bandValue, Bad, WifiAdvice.Text(WifiAdvice.Tip.Band24, facts))
+            : new(bandTitle, bandValue, Ok, w.Dfs && drops ? WifiAdvice.Text(WifiAdvice.Tip.Dfs, facts) : null));
 
-        if (hasRssi)
+        if (w.Rssi is { } rssi)
         {
             var sig = L("עוצמת אות", "Signal");
             checks.Add(rssi switch
             {
-                >= -60 => new(sig, $"{rssi} dBm ({w.GetValueOrDefault("Signal", "")})", Ok, L("אות חזק מאוד. המרחק מהנתב הוא לא הבעיה.", "Very strong. Distance from the router isn't the problem.")),
-                >= -70 => new(sig, $"{rssi} dBm", Warn, L("אות בינוני. קרבה לנתב או פחות קירות באמצע יעזרו ליציבות.", "Medium signal. Getting closer or fewer walls in between will steady it.")),
-                _ => new(sig, $"{rssi} dBm", Bad, L("אות חלש: זה מתכון לאיבוד חבילות. צריך להתקרב לנתב, לשים מגדיל טווח, או לעבור לכבל.", "Weak signal: a recipe for packet loss. Move closer, add an extender, or use a cable.")),
+                >= -60 => new(sig, $"{rssi} dBm ({w.SignalPct}%)", Ok, L("אות חזק מאוד. המרחק מהנתב הוא לא הבעיה.", "Very strong. Distance from the router isn't the problem.")),
+                >= -67 => new(sig, $"{rssi} dBm", Warn, L("אות בינוני. קרבה לנתב או פחות קירות באמצע יעזרו ליציבות.", "Medium signal. Getting closer or fewer walls in between will steady it.")),
+                _ => new(sig, $"{rssi} dBm", Bad, WifiAdvice.Text(WifiAdvice.Tip.Weak, facts)),
             });
         }
 
         var linkTitle = L("מהירות קישור", "Link rate");
-        if (rx > 0)
-            checks.Add(rx > 1201
-                ? new(linkTitle, $"{rx:0} Mbps · {radio} · {L("ערוץ רחב 160MHz", "160MHz wide channel")}", Info,
-                    L("ערוץ 160MHz נותן מהירות ענקית, אבל הוא רחב ולכן נתפס יותר להפרעות. למשחק צריך יציבות ולא מהירות: רוקט ליג משתמש בפחות מ-1Mbps. אם בדיקת הרשת מוצאת קפיצות, נסה להגדיר בנתב 80MHz.",
-                      "160MHz is huge bandwidth but catches more interference. Games need stability, not speed: Rocket League uses under 1Mbps. If the network test finds spikes, try 80MHz on the router."))
-                : new(linkTitle, $"{rx:0} Mbps · {radio}", Info));
+        if (w.RxMbps is { } rx)
+            checks.Add(new(linkTitle, $"{rx:0} Mbps · {w.Radio}{(w.Wide ? $" · {L("ערוץ רחב 160MHz", "160MHz wide channel")}" : "")}", Info,
+                w.Wide && trouble ? WifiAdvice.Text(WifiAdvice.Tip.Wide, facts) : null));
+
+        if (facts.BluetoothAudio is { } speaker)
+            checks.Add(new(L("סאונד ב-Bluetooth", "Sound over Bluetooth"), speaker, level == Warn ? Warn : Info,
+                trouble ? WifiAdvice.Text(WifiAdvice.Tip.BluetoothAudio, facts)
+                        : L("ה-Wi-Fi בזמן המשחקים היה יציב, אז זה לא מפריע כאן. אם יופיעו קפיצות, זה הדבר הראשון לבדוק.",
+                            "Wi-Fi was steady in your games, so it doesn't get in the way here. If spikes show up, check this first.")));
 
         var wifiAdapter = adapters.FirstOrDefault(a => a.Long("NdisPhysicalMedium") == 9);
         if (wifiAdapter is not null)
@@ -135,18 +144,25 @@ internal static class NetworkCheck
 
         var auto = Shell.Run("netsh", "wlan show autoconfig") ?? "";
         var scanTitle = L("סריקת רשתות ברקע", "Background network scans");
+        // Scans are judged by the last network test: only spikes on a fixed beat point at them.
+        var periodic = Agent.LastNet();
         if (auto.Contains("is enabled", StringComparison.OrdinalIgnoreCase))
-            checks.Add(new(scanTitle, L("פעילה (WLAN AutoConfig)", "On (WLAN AutoConfig)"), Info,
-                L("ווינדוס סורק רשתות Wi-Fi ברקע גם כשאתה מחובר. בכרטיסים של אינטל זה ידוע כגורם לקפיצת פינג כל כמה עשרות שניות. בדיקת הרשת תגלה אם זה קורה אצלך, ואם כן, מצב משחק יעצור את הסריקה רק בזמן משחק.",
-                  "Windows scans for Wi-Fi networks even while connected. On Intel cards that's known to cause a ping spike every few tens of seconds. The network test shows whether it happens here; if it does, Game Mode pauses scanning only during matches.")));
+            checks.Add(new(scanTitle, L("פעילה (WLAN AutoConfig)", "On (WLAN AutoConfig)"), Info, periodic switch
+            {
+                true => L("בבדיקת הרשת האחרונה נמצאו קפיצות בקצב קבוע, וזה הדפוס שסריקות רקע משאירות. הסריקה נשארת פעילה כי בלעדיה ווינדוס לא מתחבר לבד לרשתות; כבל או נתב שמחזיק את הכרטיס בערוץ אחד עוקפים את זה.",
+                          "The last network test found spikes on a fixed beat, the pattern background scans leave. Scanning stays on because without it Windows won't join networks by itself; a cable avoids it."),
+                false => L("בבדיקת הרשת האחרונה לא נמצאו קפיצות בקצב קבוע, אז הסריקות לא מפריעות כאן.", "The last network test found no spikes on a fixed beat, so the scans don't get in the way here."),
+                null => L("ווינדוס סורק רשתות ברקע גם כשאתה מחובר, ולפעמים זה משאיר קפיצת פינג בקצב קבוע. בדיקת הרשת תראה אם זה קורה כאן.",
+                          "Windows scans for networks even while connected, which sometimes leaves a ping spike on a fixed beat. The network test shows whether it happens here."),
+            }));
         else if (auto.Contains("is disabled", StringComparison.OrdinalIgnoreCase))
             checks.Add(new(scanTitle, L("כבויה", "Off"), Ok,
                 L("שים לב: ככה ווינדוס לא יתחבר לבד לרשתות אחרות עד שתפעיל אותה שוב.", "Note: Windows won't join other networks by itself until it's back on.")));
 
-        if (InputCheck.Enumerate().Any(d => d.Link == InputCheck.Link.Bluetooth))
-            checks.Add(new(L("Bluetooth פעיל", "Bluetooth in use"), L("יש התקן Bluetooth מחובר", "A Bluetooth device is connected"), Info,
-                L("בכרטיסים של אינטל ה-Bluetooth וה-Wi-Fi יושבים על אותו שבב וחולקים אנטנות. על 5GHz ההשפעה בדרך כלל קטנה, אבל שווה להריץ את בדיקת הרשת פעם עם ההתקן ופעם בלעדיו ולהשוות.",
-                  "On Intel cards Bluetooth and Wi-Fi share one chip and its antennas. On 5GHz the effect is usually small, but it's worth running the network test with and without the device.")));
+        if (facts.BluetoothInput)
+            checks.Add(new(L("שלט או עכבר ב-Bluetooth", "Bluetooth controller or mouse"), L("מחובר", "Connected"), Info,
+                trouble ? WifiAdvice.Text(WifiAdvice.Tip.BluetoothInput, facts)
+                        : L("ה-Wi-Fi בזמן המשחקים היה יציב, אז זה לא מפריע כאן.", "Wi-Fi was steady in your games, so it doesn't get in the way here.")));
 
         checks.Add(new(router, link.Gateway.ToString(), Info));
         return new Section("network", title, "wifi", checks);
