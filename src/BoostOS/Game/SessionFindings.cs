@@ -38,7 +38,21 @@ internal static class SessionFindings
         return Math.Round(100d * points.Count(p => p.GpuUtil >= SessionSummary.BusyUtil && (p.ClockReasons!.Value & SessionSummary.ThermalMask) != 0) / points.Count, 1);
     }
 
-    public static bool Held(MatchReport m) => m.GpuLowClockPct >= 30;
+    /// <summary>Ran at under half its top clock for a good part of the session. By itself that is the cooler way to do the same work.</summary>
+    public static bool LowClock(MatchReport m) => m.GpuLowClockPct >= 30;
+
+    /// <summary>A low clock that cost something: the card was also maxed out a tenth of the session or more.</summary>
+    public static bool Held(MatchReport m) => LowClock(m) && m.GpuBusyPct >= 10;
+
+    // With Game Mode on, every app on its known list runs at the lowest priority (the report's action text is shortened,
+    // so the list itself is asked); anything else counts when the report names it as quieted.
+    private static bool QuietedByGameMode(MatchReport m, BackgroundApp app) =>
+        m.GameMode && BackgroundThrottle.Targets.Contains(app.Name)
+        || m.GameModeActions?.Any(a => a.Contains(AppName(app.Name), StringComparison.OrdinalIgnoreCase)
+                                       || a.Contains(app.Name, StringComparison.OrdinalIgnoreCase)) == true;
+
+    /// <summary>A busy background app nothing dealt with (Game Mode quieting it counts as dealt with).</summary>
+    private static BackgroundApp? LeftBusy(MatchReport m) => BusyApp(m) is { } app && !QuietedByGameMode(m, app) ? app : null;
 
     private static double? SpikesPerHour(MatchReport m) =>
         m.Router is { MedianMs: not null } r && m.Minutes >= 1 ? r.Spikes / m.Minutes * 60 : null;
@@ -91,6 +105,9 @@ internal static class SessionFindings
         if (Held(m))
             o.Add(new("warn", L($"הכרטיס נשאר על כ-{m.GpuClock:0} MHz בזמן שעבד {m.GpuUtil:0}% בממוצע: משהו החזיק את המהירות שלו, לא חום.",
                 $"The GPU stayed at about {m.GpuClock:0} MHz while {m.GpuUtil:0}% busy on average: something held its speed down, not heat."), HeldTip([m])));
+        else if (LowClock(m))
+            o.Add(new("ok", L($"הכרטיס הריץ את המשחק במהירות נמוכה ({m.GpuClock:0} MHz, {m.GpuPower:0}W) ונשאר לו מקום: במלוא הכוח רק {m.GpuBusyPct:0}% מהזמן. אותה עבודה, פחות חום.",
+                $"The GPU ran the game at a low clock ({m.GpuClock:0} MHz, {m.GpuPower:0} W) with room to spare: maxed out only {m.GpuBusyPct:0}% of the time. Same work, less heat.")));
 
         if (m.GpuPowerLimitedPct >= 30)
             o.Add(new("info", L($"הכרטיס הגיע לגבול ההספק שלו ב-{m.GpuPowerLimitedPct:0}% מהזמן.", $"The GPU hit its power limit {m.GpuPowerLimitedPct:0}% of the time."),
@@ -101,7 +118,7 @@ internal static class SessionFindings
                     ? L($"כרטיס המסך עבד כמעט במלואו ({m.GpuUtil:0}%): הוא זה שהגביל.", $"The GPU was almost fully busy ({m.GpuUtil:0}%): it was the limit.")
                     : L($"כרטיס המסך עבד במלוא הכוח ב-{m.GpuBusyPct:0}% מהזמן: ברגעים האלה הוא זה שהגביל.", $"The GPU was maxed out {m.GpuBusyPct:0}% of the time: in those moments it was the limit."),
                 L("הסימונים ★ בהגדרות הווידאו של רוקט ליג מורידים ממנו עבודה בלי לפגוע במה שחשוב במשחק.", "The ★ choices in Rocket League's video settings take work off it without hurting what matters in a match.")));
-        else if (m.GpuUtil < 70 && !Held(m))
+        else if (m.GpuUtil < 70 && !LowClock(m))
             o.Add(new("ok", L($"לכרטיס היה מקום פנוי: עבד בממוצע {m.GpuUtil:0}%.", $"The GPU had room to spare: {m.GpuUtil:0}% busy on average.")));
 
         var busyApp = BusyApp(m);
@@ -118,10 +135,6 @@ internal static class SessionFindings
                 : new("ok", m.CpuTempMax is { } ct
                     ? L($"המעבד החזיק מהירות יציבה: {avg / 1000:0.0} GHz בממוצע, עד {ct:0}°C.", $"The CPU held a steady speed: {avg / 1000:0.0} GHz on average, up to {ct:0}°C.")
                     : L($"המעבד החזיק מהירות יציבה: {avg / 1000:0.0} GHz בממוצע.", $"The CPU held a steady speed: {avg / 1000:0.0} GHz on average.")));
-
-        if (m.CpuTempMax >= 95)
-            o.Add(new("warn", L($"המעבד הגיע ל-{m.CpuTempMax:0}°C.", $"The CPU reached {m.CpuTempMax:0}°C."),
-                L("בלפטופ המעבד והכרטיס חולקים את צינורות הקירור, אז החום שלו מחמם גם את הכרטיס.", "On a laptop the CPU and GPU share heat pipes, so its heat warms the GPU too.")));
 
         var facts = m.Net ?? now;
         var roamed = m.Net?.Wifi is { Bssid: { } bssidStart } && m.WifiAtEnd is { Bssid: { } bssidEnd } && bssidStart != bssidEnd;
@@ -148,12 +161,12 @@ internal static class SessionFindings
             o.Add(new("warn", L($"הזיכרון התמלא עד {m.RamMaxPct:0}%.", $"Memory filled up to {m.RamMaxPct:0}%."), L("סגור דפדפן ותוכנות כבדות לפני משחק.", "Close the browser and heavy apps before playing.")));
 
         if (busyApp is not null)
-        {
-            var quieted = m.GameModeActions?.Any(a => a.Contains(AppName(busyApp.Name), StringComparison.OrdinalIgnoreCase)) == true;
-            o.Add(new("warn", L($"{AppName(busyApp.Name)} השתמש ב-{busyApp.CpuPct:0.#}% מהמעבד בזמן המשחק.", $"{AppName(busyApp.Name)} used {busyApp.CpuPct:0.#}% of the CPU while you played."),
-                quieted ? L("מצב משחק כבר הוריד אותו לעדיפות הכי נמוכה. כדי לפנות את המעבד לגמרי, סגור אותו לפני משחק.", "Game Mode already dropped it to the lowest priority. To free the CPU completely, close it before you play.")
-                        : L("אם אין בו צורך בזמן משחק, סגור אותו לפני. מעכשיו מצב משחק מוריד לבד תוכנות שעובדות קשה ברקע.", "If you don't need it in a match, close it first. Game Mode now lowers busy background apps by itself.")));
-        }
+            o.Add(QuietedByGameMode(m, busyApp)
+                ? new("ok", L($"{AppName(busyApp.Name)} התחיל לעבוד קשה ברקע, ומצב משחק הוריד אותו לעדיפות הכי נמוכה.",
+                    $"{AppName(busyApp.Name)} started working hard in the background, and Game Mode dropped it to the lowest priority."))
+                : new("warn", L($"{AppName(busyApp.Name)} השתמש ב-{busyApp.CpuPct:0.#}% מהמעבד בזמן המשחק.", $"{AppName(busyApp.Name)} used {busyApp.CpuPct:0.#}% of the CPU while you played."),
+                    L("מצב משחק לא הוריד אותו: הוא לא נוגע בסאונד, שיחות, הקלטה ושלטים, ולא בתוכנות שרצות כמנהל. אם אין בו צורך בזמן משחק, סגור אותו לפני.",
+                      "Game Mode didn't lower it: it leaves sound, voice, recording and controllers alone, and apps running as administrator. If you don't need it in a match, close it first.")));
         else if (m.Background is not null)
             o.Add(new("ok", L("שום תוכנה ברקע לא העמיסה על המעבד.", "No background app put load on the CPU.")));
 
@@ -199,7 +212,7 @@ internal static class SessionFindings
             good.Add(L($"Wi-Fi: {withRouter.Average(m => m.Router!.MedianMs!.Value):0} ms לנתב, {perHour:0} קפיצות בשעה", $"Wi-Fi: {withRouter.Average(m => m.Router!.MedianMs!.Value):0} ms to the router, {perHour:0} spikes an hour"));
         var clocks = played.Select(m => m.CpuMhzAvg).OfType<double>().ToList();
         if (clocks.Count > 0) good.Add(L($"המעבד יציב: {clocks.Average() / 1000:0.0} GHz", $"CPU steady: {clocks.Average() / 1000:0.0} GHz"));
-        if (played.Any(m => m.Background is not null) && !played.Any(m => BusyApp(m) is not null)) good.Add(L("הרקע שקט", "Background quiet"));
+        if (played.Any(m => m.Background is not null) && !played.Any(m => LeftBusy(m) is not null)) good.Add(L("הרקע שקט", "Background quiet"));
         return new SessionsSummary(main, good);
     }
 
@@ -220,7 +233,7 @@ internal static class SessionFindings
         var cost = costs.Count > 0 ? costs.Average() : 0;
         var peak = list.Select(m => m.GpuTempMax).OfType<double>().DefaultIfEmpty(0).Max();
         // How fast it heats up when nothing holds the clock down (a held card heats slowly and would skew the time).
-        var hotAfter = list.Where(m => !Held(m)).Select(m => m.GpuHotAfterSec).OfType<double>().Order().ToList();
+        var hotAfter = list.Where(m => !LowClock(m)).Select(m => m.GpuHotAfterSec).OfType<double>().Order().ToList();
         var heatTitle = L("חום בזמן משחק", "Heat while playing");
         var heatValue = L($"שיא {peak:0}°C · עלה בפריימים {cost:0.#}% מהזמן", $"peak {peak:0}°C · cost frames {cost:0.#}% of the time");
         checks.Add(cost >= 5
@@ -232,10 +245,16 @@ internal static class SessionFindings
 
         var held = list.Where(Held).ToList();
         var speedTitle = L("מהירות הכרטיס", "GPU speed");
-        var clocks = list.Where(m => !Held(m)).Select(m => m.GpuClock).OfType<double>().ToList();
+        // A low clock is only a problem when the card was also maxed out; otherwise it is the cooler way to do the same work.
+        var low = list.Where(m => LowClock(m) && !Held(m)).ToList();
+        var clocks = list.Where(m => !LowClock(m)).Select(m => m.GpuClock).OfType<double>().ToList();
         checks.Add(held.Count > 0
             ? new(speedTitle, L($"נתקע על ~{held.Average(m => m.GpuClock ?? 0):0} MHz ב-{held.Count} מתוך {list.Count}", $"stuck at ~{held.Average(m => m.GpuClock ?? 0):0} MHz in {held.Count} of {list.Count}"), Warn, HeldTip(held))
-            : new(speedTitle, clocks.Count > 0 ? $"{clocks.Average():0} MHz {L("בממוצע", "average")}" : "—", Ok));
+            : low.Count > 0
+                ? new(speedTitle, L($"~{low.Average(m => m.GpuClock ?? 0):0} MHz ב-{low.Count} מתוך {list.Count} · נשאר מקום פנוי", $"~{low.Average(m => m.GpuClock ?? 0):0} MHz in {low.Count} of {list.Count} · room to spare"), Ok,
+                    L($"במשחקים האלה הכרטיס עשה את אותה עבודה במהירות נמוכה: בערך {low.Average(m => m.GpuPower ?? 0):0}W ושיא {low.Max(m => m.GpuTempMax ?? 0):0}°C, ובמלוא הכוח רק {low.Average(m => m.GpuBusyPct ?? 0):0}% מהזמן.",
+                      $"In these games the card did the same work at a low clock: about {low.Average(m => m.GpuPower ?? 0):0} W and a {low.Max(m => m.GpuTempMax ?? 0):0}°C peak, maxed out only {low.Average(m => m.GpuBusyPct ?? 0):0}% of the time."))
+                : new(speedTitle, clocks.Count > 0 ? $"{clocks.Average():0} MHz {L("בממוצע", "average")}" : "—", Ok));
 
         var cpu = list.Select(m => m.CpuMhzAvg).OfType<double>().ToList();
         var dips = list.Where(m => m.CpuMhzLow < m.CpuMhzAvg * 0.75).ToList();
@@ -258,19 +277,23 @@ internal static class SessionFindings
             var minutes = withRouter.Sum(m => m.Minutes);
             var perHour = withRouter.Sum(m => m.Router!.Spikes) / Math.Max(1, minutes) * 60;
             var loss = withRouter.Average(m => m.Router!.LossPct);
-            var trouble = perHour >= 6 || loss >= 1;
+            var bad = perHour > 12 || loss >= 2;
             var facts = withRouter.FirstOrDefault(m => m.Net is not null)?.Net ?? now;
             checks.Add(new(L("Wi-Fi בזמן משחק", "Wi-Fi while playing"),
                 L($"{perHour:0} קפיצות בשעה · הכי גבוה {withRouter.Max(m => m.Router!.MaxMs ?? 0):0} ms · אובדן {loss:0.#}%", $"{perHour:0} spikes an hour · highest {withRouter.Max(m => m.Router!.MaxMs ?? 0):0} ms · {loss:0.#}% loss"),
-                perHour > 12 || loss >= 2 ? Warn : Ok, trouble ? WifiTip(facts, trouble: true, drops: loss >= 0.5, count: 1) : null));
+                bad ? Warn : Ok, bad ? WifiTip(facts, trouble: true, drops: loss >= 0.5, count: 1) : null));
         }
 
-        var busy = list.Select(BusyApp).OfType<BackgroundApp>().GroupBy(a => a.Name).OrderByDescending(g => g.Count()).FirstOrDefault();
+        // Only an app nothing dealt with counts; one that Game Mode quieted was handled.
+        var busy = list.Select(LeftBusy).OfType<BackgroundApp>().GroupBy(a => a.Name).OrderByDescending(g => g.Count()).FirstOrDefault();
+        var quieted = list.Where(m => BusyApp(m) is { } app && QuietedByGameMode(m, app)).Select(m => AppName(BusyApp(m)!.Name)).Distinct().ToList();
         if (list.Any(m => m.Background is not null))
-            checks.Add(busy is null
-                ? new(L("רקע בזמן משחק", "Background while playing"), L("שקט", "Quiet"), Ok)
-                : new(L("רקע בזמן משחק", "Background while playing"), L($"{AppName(busy.Key)} עבד ב-{busy.Count()} משחקים", $"{AppName(busy.Key)} was busy in {busy.Count()} sessions"), Warn,
-                    L("מעכשיו מצב משחק מוריד לבד תוכנות שעובדות קשה ברקע. כדי לפנות את המעבד לגמרי, סגור אותה לפני משחק.", "Game Mode now lowers busy background apps by itself. To free the CPU completely, close it before playing.")));
+            checks.Add(busy is not null
+                ? new(L("רקע בזמן משחק", "Background while playing"), L($"{AppName(busy.Key)} עבד ב-{busy.Count()} משחקים", $"{AppName(busy.Key)} was busy in {busy.Count()} sessions"), Warn,
+                    L("מצב משחק לא הוריד אותו (הוא לא נוגע בסאונד, שיחות, הקלטה ושלטים). אם אין בו צורך בזמן משחק, סגור אותו לפני.", "Game Mode didn't lower it (it leaves sound, voice, recording and controllers alone). If you don't need it in a match, close it first."))
+                : quieted.Count > 0
+                    ? new(L("רקע בזמן משחק", "Background while playing"), L($"שקט · מצב משחק השתיק את {string.Join(", ", quieted)}", $"Quiet · Game Mode quieted {string.Join(", ", quieted)}"), Ok)
+                    : new(L("רקע בזמן משחק", "Background while playing"), L("שקט", "Quiet"), Ok));
 
         var battery = list.Count(m => m.OnBatteryPct >= 5);
         if (battery > 0)
@@ -310,8 +333,8 @@ internal static class SessionFindings
             return L($"גבול ההספק של הכרטיס עמד על {low.GpuPowerLimitAvg:0}W, הבסיס שלו (עם Dynamic Boost הוא מגיע ל-{low.GpuPowerMax:0}W). ככה נראה מצב שקט או חסכוני ב-Control Center: עבור ל-Performance לפני משחק.",
                 $"The GPU's power limit sat at {low.GpuPowerLimitAvg:0} W, its base (with Dynamic Boost it reaches {low.GpuPowerMax:0} W). That's what a quiet or power-saving mode in Control Center looks like: switch to Performance before playing.");
         if (known.Count > 0)
-            return L($"גבול ההספק היה מלא ({known[0].GpuPowerLimitAvg:0}W), אז זה לא מצב הלפטופ. אם זה חוזר, בדוק באפליקציית NVIDIA שאין Battery Boost או WhisperMode פעילים.",
-                $"The power limit was full ({known[0].GpuPowerLimitAvg:0} W), so it isn't the laptop's mode. If it happens again, check the NVIDIA app for Battery Boost or WhisperMode.");
+            return L($"גבול ההספק היה מלא ({known[0].GpuPowerLimitAvg:0}W), אז זה לא מצב הלפטופ ולא חום. BoostOS לא יודע מה החזיק את הכרטיס, וממשיך לרשום כל משחק.",
+                $"The power limit was full ({known[0].GpuPowerLimitAvg:0} W), so it isn't the laptop's mode, and it isn't heat. BoostOS doesn't know what held the card, and keeps recording every game.");
         return L("לרוב זה מצב שקט או חסכוני ב-Control Center: ב-Performance הכרטיס מאיץ. המשחקים האלה הוקלטו לפני ש-BoostOS רשם את גבול ההספק; מהמשחק הבא יהיה ברור מה עצר אותו.",
             "Usually it's a quiet or power-saving mode in Control Center: in Performance the card boosts. These sessions were recorded before BoostOS kept the power limit; from the next game it will be clear what held it.");
     }

@@ -14,6 +14,8 @@ public sealed record AppSettings
     public bool GameModeOnPlay { get; init; } = true;
     /// <summary>The background recorder starts with Windows, so every game is recorded however it was started.</summary>
     public bool BackgroundRecorder { get; init; } = true;
+    /// <summary>Fixes the player undid: BoostOS sets what it can by itself, but never again something that was put back.</summary>
+    public IReadOnlyList<string> SkippedFixes { get; init; } = [];
     /// <summary>The game on the big first tile ("epic:Sugar", "steam:730"…). Null: Rocket League, or the first game.</summary>
     public string? FavoriteGame { get; init; }
 

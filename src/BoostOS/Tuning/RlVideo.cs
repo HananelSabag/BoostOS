@@ -68,10 +68,12 @@ internal static class RlVideo
             new("worldDetail", detail, ["0", "1", "2"], hot ? "1" : null),
             new("dynamicShadows", Toggle("dynamicShadows"), OnOff, hot ? "off" : null),
             new("hqShaders", Toggle("hqShaders"), OnOff, null),
-            new("ao", Toggle("ao"), OnOff, "off"),
-            new("bloom", Toggle("bloom"), OnOff, "off"),
-            new("lightShafts", Toggle("lightShafts"), OnOff, "off"),
-            new("lensFlares", Toggle("lensFlares"), OnOff, "off"),
+            // Looks only: suggested off just when the card was the limit. With power to spare they are a matter of taste.
+            new("ao", Toggle("ao"), OnOff, hot ? "off" : null),
+            new("bloom", Toggle("bloom"), OnOff, hot ? "off" : null),
+            new("lightShafts", Toggle("lightShafts"), OnOff, hot ? "off" : null),
+            new("lensFlares", Toggle("lensFlares"), OnOff, hot ? "off" : null),
+            // These two blur the picture, so off is about seeing the ball, not about performance.
             new("dof", Toggle("dof"), OnOff, "off"),
             new("motionBlur", Toggle("motionBlur"), OnOff, "off"),
         ];

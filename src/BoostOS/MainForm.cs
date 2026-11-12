@@ -239,7 +239,25 @@ internal sealed class MainForm : Form
                     break;
 
                 case "scan":
-                    Post("scan", await Scanner.RunAsync());
+                    var report = await Scanner.RunAsync();
+                    // What BoostOS can set by itself, it sets, instead of leaving a list of chores. Fixes that need
+                    // Windows' approval still wait for a press, and a fix the player undid stays undone.
+                    var own = report.Sections.SelectMany(x => x.Checks)
+                        .Where(c => c.Fix is { NeedsAdmin: false } && c.Status is CheckStatus.Warn or CheckStatus.Bad)
+                        .Select(c => c.Fix!.Id).Distinct().Where(id => !settings.SkippedFixes.Contains(id)).ToList();
+                    if (own.Count > 0)
+                    {
+                        var set = await ChangeSystemAsync(() => Fixes.Run(own, undo: false));
+                        if (set.Done.Count > 0)
+                        {
+                            Log.Write($"set by itself after a scan: {string.Join(", ", set.Done)}");
+                            report = await Scanner.RunAsync();
+                            Post("fixesApplied", Fixes.Applied());
+                            Post("notice", new { message = I18n.L($"BoostOS סידר {set.Done.Count} הגדרות בעצמו. אפשר לבטל בלשונית התיקונים.",
+                                $"BoostOS set {set.Done.Count} settings by itself. Undo is in the Fixes tab.") });
+                        }
+                    }
+                    Post("scan", report);
                     break;
 
                 case "fix":
@@ -250,6 +268,7 @@ internal sealed class MainForm : Form
                         var outcome = Fixes.Run(ids, undo: cmd == "undoFix");
                         return new { outcome, applied = Fixes.Applied().Count };
                     });
+                    RememberUndone(fixedResult.outcome.Done, undone: cmd == "undoFix");
                     Post("fixResult", fixedResult);
                     break;
 
@@ -260,6 +279,7 @@ internal sealed class MainForm : Form
                         var outcome = Fixes.Run(all, undo: true);
                         return new { outcome, applied = Fixes.Applied().Count };
                     });
+                    RememberUndone(undone.outcome.Done, undone: true);
                     Post("fixResult", undone);
                     break;
 
@@ -327,6 +347,16 @@ internal sealed class MainForm : Form
         await systemChanges.WaitAsync();
         try { return await Task.Run(change); }
         finally { systemChanges.Release(); }
+    }
+
+    /// <summary>A fix the player put back is never set again by itself; pressing Fix on it lifts that.</summary>
+    private void RememberUndone(IEnumerable<string> ids, bool undone)
+    {
+        var skipped = (undone ? settings.SkippedFixes.Union(ids) : settings.SkippedFixes.Except(ids)).ToList();
+        if (skipped.Count == settings.SkippedFixes.Count) return;
+        settings = settings with { SkippedFixes = skipped };
+        settings.Save();
+        Post("settings", settings);
     }
 
     /// <summary>The game a message names, else the favourite, else Rocket League, else the first game found.</summary>

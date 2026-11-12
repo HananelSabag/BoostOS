@@ -99,6 +99,7 @@ function toggle(id, hasIssues) {
   $(`[data-sec="${id}"]`, root)?.focus({ preventScroll: true });
 }
 
+// A line that is fine shows what was found and nothing else: explanations are for lines with something to improve.
 function row(c, key) {
   const issue = c.status === 'warn' || c.status === 'bad';
   const fix = c.fix && issue
@@ -110,6 +111,6 @@ function row(c, key) {
       <span class="c-title">${esc(c.title)}</span>
       <span class="c-value">${valueHtml(c.value)}</span>
       ${fix}
-      ${c.advice ? `<p class="c-advice">${esc(c.advice)}</p>` : ''}
+      ${c.advice && issue ? `<p class="c-advice">${esc(c.advice)}</p>` : ''}
     </div>`;
 }

@@ -131,7 +131,7 @@ public class EvidenceTests
     [Fact]
     public void A_held_clock_with_a_base_power_limit_points_at_the_laptop_mode()
     {
-        var held = Session() with { GpuClock = 780, GpuUtil = 80, GpuLowClockPct = 95, GpuPowerLimitAvg = 80 };
+        var held = Session() with { GpuClock = 780, GpuUtil = 80, GpuLowClockPct = 95, GpuBusyPct = 20, GpuPowerLimitAvg = 80 };
         var line = Assert.Single(SessionFindings.For(held), f => f.Status == "warn" && f.Text.Contains("780"));
         Assert.Contains("Control Center", line.Tip);
         Assert.Contains("80", line.Tip);
@@ -161,9 +161,45 @@ public class EvidenceTests
     }
 
     [Fact]
+    public void A_low_clock_with_room_to_spare_is_the_cooler_way_to_do_the_same_work()
+    {
+        // 780 MHz, 72% busy, maxed out 3% of the time: the frame cap is met with less power. Nothing to warn about.
+        var low = Session() with { GpuClock = 780, GpuUtil = 72, GpuLowClockPct = 93, GpuBusyPct = 3, GpuPower = 53, GpuTempMax = 81, GpuThermalLimitedPct = 0 };
+        Assert.False(SessionFindings.Held(low));
+        var findings = SessionFindings.For(low);
+        Assert.DoesNotContain(findings, f => f.Status is "bad" or "warn");
+        Assert.Contains(findings, f => f.Status == "ok" && f.Text.Contains("780"));
+        var section = SessionFindings.PlaySection([low, low, Session()], null);
+        Assert.DoesNotContain(section.Checks, c => c.Status is CheckStatus.Warn or CheckStatus.Bad);
+        Assert.Equal("ok", SessionFindings.Summarize([low, low, Session()]).Main.Status);
+    }
+
+    [Fact]
+    public void An_app_Game_Mode_quieted_was_handled_and_one_it_left_alone_is_said()
+    {
+        var busy = Session() with { Background = [new BackgroundApp("adb", 3.1)] };
+        var handled = busy with { GameModeActions = ["quieted when they worked hard: adb"] };
+        Assert.DoesNotContain(SessionFindings.For(handled), f => f.Status is "bad" or "warn");
+        Assert.DoesNotContain(SessionFindings.PlaySection([handled, Session()], null).Checks, c => c.Status == CheckStatus.Warn);
+        Assert.Contains(SessionFindings.For(busy), f => f.Status == "warn" && f.Text.Contains("adb"));
+        Assert.Contains(SessionFindings.PlaySection([busy, Session()], null).Checks, c => c.Status == CheckStatus.Warn && c.Value.Contains("adb"));
+    }
+
+    [Fact]
+    public void Looks_are_suggested_off_only_when_the_card_was_the_limit()
+    {
+        var ini = new Dictionary<string, string> { ["Fullscreen"] = "True", ["Bloom"] = "True", ["MotionBlur"] = "True", ["UseVsync"] = "True" };
+        string? Suggested(bool hot, string id) => BoostOS.Tuning.RlVideo.Describe(ini, hot).Single(s => s.Id == id).Recommended;
+        Assert.Null(Suggested(false, "bloom"));
+        Assert.Equal("off", Suggested(true, "bloom"));
+        Assert.Equal("off", Suggested(false, "motionBlur")); // blur is about seeing the ball, not performance
+        Assert.Equal("off", Suggested(false, "vsync"));
+    }
+
+    [Fact]
     public void The_scan_area_counts_what_happened_in_games()
     {
-        var held = Session() with { GpuClock = 780, GpuUtil = 80, GpuLowClockPct = 95 };
+        var held = Session() with { GpuClock = 780, GpuUtil = 80, GpuLowClockPct = 95, GpuBusyPct = 20 };
         var section = SessionFindings.PlaySection([Session(), held, Session()], null);
         Assert.Equal("play", section.Id);
         Assert.Contains(section.Checks, c => c.Status == CheckStatus.Warn && c.Value.Contains("780"));
