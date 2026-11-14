@@ -16,7 +16,7 @@ public class EvidenceTests
             Description            : Intel(R) Wi-Fi 6 AX201 160MHz
             State                  : connected
             SSID                   : home
-            AP BSSID               : 62:d8:a4:a5:db:39
+            AP BSSID               : 00:11:22:33:44:55
             Band                   : 5 GHz
             Channel                : 52
             Radio type             : 802.11ax
@@ -46,13 +46,13 @@ public class EvidenceTests
     [Fact]
     public void A_strong_5GHz_link_gets_no_advice_without_evidence_of_trouble()
     {
-        var facts = new NetFacts(true, StrongDfsWide, EthernetPort: true, BluetoothAudio: "Headphones (UGREEN-90748)", BluetoothInput: false);
+        var facts = new NetFacts(true, StrongDfsWide, EthernetPort: true, BluetoothAudio: "Headphones (BT Speaker)", BluetoothInput: false);
         Assert.Empty(WifiAdvice.For(facts, trouble: false));
         // With spikes: Bluetooth sound first (it takes air time all the time), then the wide channel, then the cable.
         Assert.Equal([WifiAdvice.Tip.BluetoothAudio, WifiAdvice.Tip.Wide, WifiAdvice.Tip.Cable], WifiAdvice.For(facts, trouble: true));
         // The DFS channel only matters when the link actually dropped.
         Assert.Equal([WifiAdvice.Tip.BluetoothAudio, WifiAdvice.Tip.Wide, WifiAdvice.Tip.Dfs, WifiAdvice.Tip.Cable], WifiAdvice.For(facts, trouble: true, drops: true));
-        Assert.Contains("UGREEN", WifiAdvice.Text(WifiAdvice.Tip.BluetoothAudio, facts));
+        Assert.Contains("BT Speaker", WifiAdvice.Text(WifiAdvice.Tip.BluetoothAudio, facts));
     }
 
     [Fact]
@@ -143,12 +143,12 @@ public class EvidenceTests
     [Fact]
     public void Wifi_spikes_get_advice_from_that_session_s_own_link()
     {
-        var facts = new NetFacts(true, StrongDfsWide, false, "Headphones (UGREEN-90748)", false);
+        var facts = new NetFacts(true, StrongDfsWide, false, "Headphones (BT Speaker)", false);
         var spiky = Session(60) with { Router = new PingStats(2, 5, 137, 0, 14, 3600), Net = facts };
         var line = Assert.Single(SessionFindings.For(spiky), f => f.Status == "warn" && f.Text.Contains("137"));
-        Assert.Contains("UGREEN", line.Tip);
+        Assert.Contains("BT Speaker", line.Tip);
         var steady = Session(60) with { Router = new PingStats(2, 4, 9, 0, 0, 3600), Net = facts };
-        Assert.DoesNotContain(SessionFindings.For(steady), f => f.Tip?.Contains("UGREEN") == true);
+        Assert.DoesNotContain(SessionFindings.For(steady), f => f.Tip?.Contains("BT Speaker") == true);
     }
 
     [Fact]
@@ -217,8 +217,8 @@ public class EvidenceTests
         Assert.Null(router.PeriodSeconds);
         var internet = NetTest.Analyze(new NetTest.Target("internet", "Internet", IPAddress.Loopback, 400),
             Enumerable.Range(0, 150).Select(i => (Math.Round(i * 0.4, 2), (double?)8)).ToList());
-        var facts = new NetFacts(true, StrongDfsWide, false, "Headphones (UGREEN-90748)", false);
+        var facts = new NetFacts(true, StrongDfsWide, false, "Headphones (BT Speaker)", false);
         var result = NetTest.Judge(60, [router, internet], pacedLoss: false, facts);
-        Assert.Contains(result.Findings, f => f.Text.Contains("UGREEN"));
+        Assert.Contains(result.Findings, f => f.Text.Contains("BT Speaker"));
     }
 }

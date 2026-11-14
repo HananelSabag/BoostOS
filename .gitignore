@@ -8,3 +8,4 @@ TestResults/
 # Machine-specific: backups of this PC's settings, and the sample scan used for browser previews
 backups/
 src/BoostOS/wwwroot/dev/
+dist/

@@ -1,0 +1,43 @@
+name: Release
+
+# Pushing a tag like v0.5.2 builds the installer and a portable zip and attaches both to a GitHub release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Test
+        run: dotnet test BoostOS.slnx -c Release
+
+      - name: Publish (self-contained, no .NET install needed)
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          "BOOSTOS_VERSION=$version" >> $env:GITHUB_ENV
+          dotnet publish src/BoostOS/BoostOS.csproj -c Release -r win-x64 --self-contained true -p:Version=$version -o publish
+
+      - name: Installer and portable zip
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc installer\BoostOS.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path publish\* -DestinationPath "dist\BoostOS-$env:BOOSTOS_VERSION-portable.zip"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

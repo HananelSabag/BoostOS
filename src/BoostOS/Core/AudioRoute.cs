@@ -23,7 +23,7 @@ internal static class AudioRoute
                     if (device.OpenPropertyStore(0, out var store) != 0) return null;
                     try
                     {
-                        // The device's own name ("UGREEN-90748") reads better than the endpoint's ("Headphones (UGREEN-90748)").
+                        // The device's own name ("BT Speaker") reads better than the endpoint's ("Headphones (BT Speaker)").
                         var name = Read(store, DeviceName) ?? Read(store, FriendlyName) ?? "";
                         var bus = Read(store, EnumeratorName) ?? "";
                         return new Output(name, bus.Equals("BTHENUM", StringComparison.OrdinalIgnoreCase)

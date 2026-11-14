@@ -17,6 +17,18 @@ back by itself and you get a short report on how the PC held up.
 
 > Made by **Hananel Sabag**.
 
+## Download
+
+**[Get the latest release](https://github.com/HananelSabag/BoostOS/releases/latest)** for Windows 10 or 11 (64-bit):
+
+- `BoostOS-Setup-x.y.z.exe`: the installer. It installs for your user only (no administrator rights), adds Start menu
+  and desktop shortcuts, and uninstalls from Windows Settings like any app.
+- `BoostOS-x.y.z-portable.zip`: the same files without an installer. Unzip anywhere and run `BoostOS.exe`.
+
+Nothing else to install: .NET is included, and the WebView2 runtime ships with Windows 11 (and current Windows 10).
+The files are not code-signed, so the first run shows Windows SmartScreen: choose **More info → Run anyway**.
+An NVIDIA card adds the GPU checks and session reports; everything else works on any PC.
+
 ---
 
 ## What's inside

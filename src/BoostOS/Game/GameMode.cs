@@ -27,7 +27,7 @@ internal static class GameMode
     // software, and Claude are deliberately left alone.
     private static readonly AppRule[] Rules =
     [
-        new("OneDrive", ["OneDrive"], "/shutdown", null), // the user unlinked OneDrive and doesn't want it back after a match
+        new("OneDrive", ["OneDrive"], "/shutdown", "/background"),
         new("Steam", ["steam"], "-shutdown", "-silent"),
         new("Phone Link", ["PhoneExperienceHost", "CrossDeviceService", "CrossDeviceResume"], null, null),
         new("Widgets", ["Widgets"], null, null), // WidgetService is respawned by Windows at once, so leave it
@@ -140,8 +140,8 @@ internal static class GameMode
         });
 
         plan.Add(new(L("אחרי המשחק", "After the match"),
-            L("כשהמשחק נסגר הכל חוזר לבד: Steam נפתח שוב ומצב החשמל חוזר. OneDrive נשאר סגור.",
-              "When the game closes, everything goes back by itself: Steam reopens and the power mode is restored. OneDrive stays closed."), true));
+            L("כשהמשחק נסגר הכל חוזר לבד: Steam ו-OneDrive נפתחים שוב ומצב החשמל חוזר.",
+              "When the game closes, everything goes back by itself: Steam and OneDrive reopen and the power mode is restored."), true));
         return plan;
     }
 
