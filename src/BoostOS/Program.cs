@@ -54,6 +54,16 @@ internal static class Program
             return 0;
         }
 
+        // Changes Rocket League video settings the way the tuner does (game closed; the old values are kept for Undo).
+        if (args is ["--video-set", var videoChanges, ..])
+        {
+            if (Diagnostics.RocketLeague.IsRunning()) { Console.WriteLine("the game is running"); return 1; }
+            RlVideo.Apply(videoChanges.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(pair => pair.Split('=', 2)).Where(p => p.Length == 2).ToDictionary(p => p[0], p => p[1]));
+            Console.WriteLine(string.Join(", ", RlVideo.Read(hot: false).Settings.Select(s => $"{s.Id}={s.Value}")));
+            return 0;
+        }
+
         if (args is ["--games-json", var gamesPath, ..])
         {
             var games = Game.GameLibrary.List(refresh: true);

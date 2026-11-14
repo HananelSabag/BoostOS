@@ -122,6 +122,7 @@ BoostOS.exe --games-json games.json      # installed games, art, running game, R
 BoostOS.exe --net-json net.json 60       # 60-second network test with every sample
 BoostOS.exe --efficiency-test            # efficiency mode on the heavy background apps for 5 s, then back
 BoostOS.exe --record-json rec.json 40    # a 40-second session recording without a game: checks every probe
+BoostOS.exe --video-set ao=on,bloom=off  # Rocket League video settings, as the tuner sets them (game closed, Undo kept)
 BoostOS.exe --findings-json f.json [en]  # what every recorded session means, as Game data shows it
 BoostOS.exe --busy-test 20 [2]           # which apps Game Mode would quiet as busy over 20 s (changes nothing)
 BoostOS.exe --nvidia-json nv.json        # raw NVIDIA profile fields, global profile included
